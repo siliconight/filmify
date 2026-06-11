@@ -52,7 +52,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
+
+# Settings persisted in a project look file (--save-look / --look-file)
+LOOK_KEYS = [
+    "look", "bw", "conform", "weave", "grain", "halation", "soften",
+    "saturation", "chroma_soften", "plate_opacity", "no_curve",
+    "no_vignette", "crf", "codec", "lut", "grain_plate",
+]
 
 # Resolved at startup by find_tool(); plain names work as a fallback.
 FFMPEG = "ffmpeg"
@@ -143,6 +150,41 @@ def fpath(path: Path) -> str:
         sys.exit(f"error: path contains a quote character, please rename: {s}")
     s = s.replace("\\", "/").replace(":", "\\:")
     return f"'{s}'"
+
+
+def apply_look_file(args, ap) -> None:
+    """Fill settings from a project look file. Explicit CLI flags win:
+    a value is only taken from the file where the arg is still at its
+    parser default. Relative LUT/grain-plate paths resolve against the
+    look file's own folder, so a project directory stays portable."""
+    lf = Path(args.look_file)
+    if not lf.exists():
+        sys.exit(f"error: look file not found: {lf}")
+    try:
+        data = json.loads(lf.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        sys.exit(f"error: {lf} is not valid JSON: {e}")
+    base = lf.resolve().parent
+    for k in LOOK_KEYS:
+        if k in data and getattr(args, k) == ap.get_default(k):
+            v = data[k]
+            if k in ("lut", "grain_plate") and v is not None:
+                v = Path(v)
+                if not v.is_absolute():
+                    v = base / v
+            setattr(args, k, v)
+
+
+def save_look_file(args) -> None:
+    """Write the effective settings to a JSON look file."""
+    data = {"filmify_version": __version__}
+    for k in LOOK_KEYS:
+        v = getattr(args, k)
+        data[k] = str(v) if isinstance(v, Path) else v
+    Path(args.save_look).write_text(
+        json.dumps(data, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"look saved: {args.save_look}")
 
 
 def build_filtergraph(args, info: dict) -> str:
@@ -299,18 +341,30 @@ def render(src: Path, out: Path, args) -> None:
     cmd += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a?"]
     if args.preview:
         cmd += ["-t", f"{args.preview:g}"]
-    cmd += [
-        "-c:v", "libx264",
-        # preview trades quality for iteration speed
-        "-preset", "fast" if args.preview else "slow",
-        "-crf", str(args.crf),
-        # tune for grain retention so the encoder doesn't smooth it away
-        "-tune", "grain",
-        "-c:a", "copy",
-        str(out),
-    ]
+    if args.codec == "prores":
+        # ProRes 422 HQ — edit-friendly mezzanine (Final Cut, Resolve, Premiere)
+        cmd += ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
+                "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"]
+    elif args.codec == "dnxhr":
+        # DNxHR HQ — edit-friendly mezzanine (Resolve, Premiere, Avid)
+        cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq",
+                "-pix_fmt", "yuv422p", "-c:a", "pcm_s16le"]
+    else:
+        # h264 — delivery codec; fine for a finish pass, poor for editing
+        cmd += [
+            "-c:v", "libx264",
+            # preview trades quality for iteration speed
+            "-preset", "fast" if args.preview else "slow",
+            "-crf", str(args.crf),
+            # tune for grain retention so the encoder doesn't smooth it away
+            "-tune", "grain",
+            "-c:a", "copy",
+        ]
+    cmd += [str(out)]
 
     bits = [args.look]
+    if args.codec != "h264":
+        bits.append(args.codec)
     if args.bw:
         bits.append("B&W")
     if args.conform:
@@ -384,6 +438,17 @@ def main() -> None:
                          "film color resolves softer than its luminance")
     ap.add_argument("--weave", type=float, default=0.0, metavar="PX",
                     help="gate weave: slow frame drift in pixels (try 1-2; 0 disables)")
+    ap.add_argument("--codec", choices=("h264", "prores", "dnxhr"),
+                    default="h264",
+                    help="output codec: h264 for delivery/finish pass; "
+                         "prores or dnxhr (both .mov, PCM audio) for "
+                         "edit-friendly graded dailies")
+    ap.add_argument("--look-file", type=Path, default=None, metavar="FILE.json",
+                    help="load project look settings from a JSON file "
+                         "(explicit flags still override)")
+    ap.add_argument("--save-look", type=Path, default=None, metavar="FILE.json",
+                    help="save the effective settings to a JSON look file "
+                         "for reuse across shoot days and the finish pass")
     ap.add_argument("--no-curve", action="store_true",
                     help="disable the built-in filmic tone curve (e.g. when your LUT includes one)")
     ap.add_argument("--no-vignette", action="store_true",
@@ -419,12 +484,18 @@ def main() -> None:
         if f and not f.exists():
             sys.exit(f"error: {f} not found")
 
+    if args.look_file:
+        apply_look_file(args, ap)
+    if args.save_look:
+        save_look_file(args)
+
     if args.compare:
         suffix = "_compare"
     elif args.preview:
         suffix = "_preview"
     else:
         suffix = "_film"
+    ext = ".mp4" if args.codec == "h264" else ".mov"
     print(f"filmify {__version__}\n")
 
     if args.input.is_dir():
@@ -443,9 +514,12 @@ def main() -> None:
         print(f"batch : {len(files)} file(s) → {outdir}\n")
         for i, f in enumerate(files, 1):
             print(f"[{i}/{len(files)}]")
-            render(f, outdir / (f.stem + suffix + ".mp4"), args)
+            render(f, outdir / (f.stem + suffix + ext), args)
     else:
-        out = args.output or args.input.with_name(args.input.stem + suffix + ".mp4")
+        out = args.output or args.input.with_name(args.input.stem + suffix + ext)
+        if args.output and args.codec != "h264" and out.suffix.lower() not in (".mov", ".mxf"):
+            out = out.with_suffix(".mov")
+            print(f"note  : {args.codec} needs a .mov container — output is {out.name}")
         render(args.input, out, args)
 
 

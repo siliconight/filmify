@@ -65,6 +65,46 @@ Happy with it? Run the whole shoot day in one go (outputs land in
 python filmify.py shoot_day1/ --look heavy --weave 1.5 --conform
 ```
 
+## Workflows
+
+**1. Graded dailies** — shoot, batch-process, edit the graded clips.
+
+```sh
+# dial in the look on one clip, then save it as a project asset
+python filmify.py clip01.mp4 --look heavy --weave 1.5 --compare --preview
+python filmify.py clip01.mp4 --look heavy --weave 1.5 --conform --save-look myfilm.json
+
+# run every shoot day through the same look, as edit-friendly ProRes
+python filmify.py shoot_day1/ --look-file myfilm.json --codec prores
+python filmify.py shoot_day2/ --look-file myfilm.json --codec prores
+```
+
+Mixed footage (a phone at 60 fps, a mirrorless at 30, drone clips in another
+container) comes out as one uniform set: same 24 fps cadence, same codec,
+same tonal character, same grain. That uniformity is most of what reads as
+"one film" instead of "assembled clips." Use `--codec prores` (Final Cut,
+Resolve, Premiere) or `--codec dnxhr` (Resolve, Premiere, Avid) here — they
+scrub smoothly in editors and survive the editor's final export. The default
+h264 is a *delivery* codec: editing it means your grain gets compressed
+twice.
+
+**2. Finish pass** — edit the raw footage, export one master, filmify that.
+
+```sh
+python filmify.py master_export.mov --look-file myfilm.json
+```
+
+One generation of encoding instead of two, grain and weave run continuously
+across cuts the way they would on a real print, and the look stays
+adjustable until the very end. Best quality; the trade-off is editing
+ungraded footage.
+
+The look file is the cohesion mechanism in both: save it once, commit it to
+your project folder, and every batch and the finish pass get identical
+treatment. Relative LUT/grain-plate paths inside it resolve against the
+look file's folder, so the project directory stays portable. Explicit flags
+always override the file.
+
 ## Presets
 
 | Preset     | Feel                                          |

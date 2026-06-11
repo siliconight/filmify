@@ -3,6 +3,33 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.6.0] — 2026-06-11
+
+Workflow release: graded dailies and finish-pass paths, both documented.
+
+### Added
+- Mezzanine codecs (`--codec prores|dnxhr|h264`): ProRes 422 HQ and DNxHR HQ
+  output in .mov with PCM audio, for the batch-then-edit workflow — they
+  scrub smoothly in editors and survive the editor's re-export, unlike
+  long-GOP h264. h264 remains the default for delivery/finish passes.
+  Output extension is codec-aware; a wrong `-o` extension is auto-corrected
+  to .mov with a note.
+- Project look files: `--save-look myfilm.json` writes the effective
+  settings; `--look-file myfilm.json` applies them, with explicit CLI flags
+  still overriding. Relative LUT/grain-plate paths resolve against the look
+  file's folder so project directories stay portable. This makes the look a
+  versionable project asset — shoot day 2, weeks later, gets identical
+  treatment.
+- README "Workflows" section covering both paths: graded dailies
+  (cohesion-first, WYSIWYG editing) and finish pass (single encode
+  generation, grain/weave continuous across cuts, look adjustable to the
+  end).
+
+### Known limitation
+- Internal processing is 8-bit 4:2:0 regardless of output codec; ProRes/
+  DNxHR output is a faithful container for it, not a 10-bit pipeline.
+  A true 10-bit path is a roadmap candidate.
+
 ## [0.5.1] — 2026-06-11
 
 Cross-platform hardening for Windows and macOS.
