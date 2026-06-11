@@ -3,6 +3,24 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.7.0] — 2026-06-11
+
+### Added
+- HTML processing report: after every run, filmify writes
+  `filmify_report.html` next to the outputs and opens it in the default
+  browser. Per clip: before/after thumbnails (embedded as data URIs — the
+  report is one self-contained, shareable file), ✓/✗ status with the error
+  for failures, fps in → out, duration, file size, and codec. The header
+  records the exact settings and look file used, so the report doubles as
+  a record of how the dailies were made. `--no-report` opts out.
+- Terminal summary line (`5/5 clips ✓ · report: …`).
+
+### Changed
+- Batch runs now survive a broken file: it's recorded as failed in the
+  report and the run continues, instead of aborting the whole batch. The
+  process exits nonzero if any clip failed.
+- `probe()` raises instead of exiting, enabling the above.
+
 ## [0.6.0] — 2026-06-11
 
 Workflow release: graded dailies and finish-pass paths, both documented.

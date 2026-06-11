@@ -88,6 +88,12 @@ scrub smoothly in editors and survive the editor's final export. The default
 h264 is a *delivery* codec: editing it means your grain gets compressed
 twice.
 
+After every run, filmify writes **`filmify_report.html`** next to the
+outputs and opens it in your browser: before/after thumbnails per clip,
+✓/✗ status, fps in → out, sizes, and the exact settings used. It's a single
+self-contained file — send it to a collaborator as "here's how day 2 came
+out." `--no-report` to skip it.
+
 **2. Finish pass** — edit the raw footage, export one master, filmify that.
 
 ```sh

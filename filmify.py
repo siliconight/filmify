@@ -45,14 +45,18 @@ protect highlights (or shoot log/flat), light intentionally, and shoot
 """
 
 import argparse
+import base64
+import datetime
+import html
 import json
 import os
 import shutil
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 # Settings persisted in a project look file (--save-look / --look-file)
 LOOK_KEYS = [
@@ -123,19 +127,24 @@ BW_MIX = (
 
 
 def probe(path: Path) -> dict:
-    """Return basic stream info for the input file."""
+    """Return basic stream info for a file. Raises RuntimeError on failure
+    so batch runs can record the error and continue."""
     cmd = [
         FFPROBE, "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=avg_frame_rate,width,height",
+        "-show_entries", "stream=avg_frame_rate,width,height:format=duration",
         "-of", "json", str(path),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True)
-    if out.returncode != 0:
-        sys.exit(f"ffprobe failed on {path}:\n{out.stderr}")
-    info = json.loads(out.stdout)["streams"][0]
+    data = json.loads(out.stdout) if out.returncode == 0 else {}
+    if out.returncode != 0 or not data.get("streams"):
+        detail = out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "no video stream"
+        raise RuntimeError(f"ffprobe failed on {path.name}: {detail}")
+    info = data["streams"][0]
     num, den = info["avg_frame_rate"].split("/")
     fps = float(num) / float(den) if float(den) else 0.0
-    return {"fps": fps, "width": info["width"], "height": info["height"]}
+    dur = float(data.get("format", {}).get("duration", 0) or 0)
+    return {"fps": fps, "width": info["width"], "height": info["height"],
+            "duration": dur}
 
 
 def fpath(path: Path) -> str:
@@ -329,39 +338,7 @@ def build_filtergraph(args, info: dict) -> str:
     return graph
 
 
-def render(src: Path, out: Path, args) -> None:
-    """Build and run the ffmpeg command for one file."""
-    info = probe(src)
-    graph = build_filtergraph(args, info)
-
-    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "warning", "-stats",
-           "-i", str(src)]
-    if args.grain_plate:
-        cmd += ["-stream_loop", "-1", "-i", str(args.grain_plate)]
-    cmd += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a?"]
-    if args.preview:
-        cmd += ["-t", f"{args.preview:g}"]
-    if args.codec == "prores":
-        # ProRes 422 HQ — edit-friendly mezzanine (Final Cut, Resolve, Premiere)
-        cmd += ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
-                "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"]
-    elif args.codec == "dnxhr":
-        # DNxHR HQ — edit-friendly mezzanine (Resolve, Premiere, Avid)
-        cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq",
-                "-pix_fmt", "yuv422p", "-c:a", "pcm_s16le"]
-    else:
-        # h264 — delivery codec; fine for a finish pass, poor for editing
-        cmd += [
-            "-c:v", "libx264",
-            # preview trades quality for iteration speed
-            "-preset", "fast" if args.preview else "slow",
-            "-crf", str(args.crf),
-            # tune for grain retention so the encoder doesn't smooth it away
-            "-tune", "grain",
-            "-c:a", "copy",
-        ]
-    cmd += [str(out)]
-
+def summarize_settings(args) -> str:
     bits = [args.look]
     if args.codec != "h264":
         bits.append(args.codec)
@@ -379,18 +356,151 @@ def render(src: Path, out: Path, args) -> None:
         bits.append(f"preview {args.preview:g}s")
     if args.compare:
         bits.append("compare split")
+    if args.look_file:
+        bits.append(f"look file: {Path(args.look_file).name}")
+    return " + ".join(bits)
+
+
+def grab_thumb(path: Path, seconds: float) -> str:
+    """Return a frame as a base64 JPEG data URI ('' on failure), so the
+    report is a single self-contained file."""
+    out = subprocess.run(
+        [FFMPEG, "-v", "error", "-ss", f"{max(0.0, seconds):.2f}",
+         "-i", str(path), "-frames:v", "1", "-vf", "scale=480:-2",
+         "-f", "image2", "-c:v", "mjpeg", "-q:v", "4", "pipe:1"],
+        capture_output=True,
+    )
+    if out.returncode != 0 or not out.stdout:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(out.stdout).decode()
+
+
+def fmt_size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} GB"
+
+
+def render(src: Path, out: Path, args) -> dict:
+    """Build and run the ffmpeg command for one file. Returns a result
+    record for the report; failures are recorded so a batch can continue."""
+    res = {"src": src, "out": out, "ok": False, "error": "",
+           "fps_in": None, "fps_out": None, "size": None, "dur": None,
+           "thumb_before": "", "thumb_after": ""}
+    try:
+        info = probe(src)
+    except RuntimeError as exc:
+        res["error"] = str(exc)
+        print(f"input : {src}\nFAILED: {res['error']}\n")
+        return res
+    res["fps_in"] = info["fps"]
+
+    graph = build_filtergraph(args, info)
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "warning", "-stats",
+           "-i", str(src)]
+    if args.grain_plate:
+        cmd += ["-stream_loop", "-1", "-i", str(args.grain_plate)]
+    cmd += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a?"]
+    if args.preview:
+        cmd += ["-t", f"{args.preview:g}"]
+    if args.codec == "prores":
+        # ProRes 422 HQ — edit-friendly mezzanine (Final Cut, Resolve, Premiere)
+        cmd += ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
+                "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"]
+    elif args.codec == "dnxhr":
+        # DNxHR HQ — edit-friendly mezzanine (Resolve, Premiere, Avid)
+        cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq",
+                "-pix_fmt", "yuv422p", "-c:a", "pcm_s16le"]
+    else:
+        # h264 — delivery codec; fine for a finish pass, poor for editing
+        cmd += ["-c:v", "libx264",
+                "-preset", "fast" if args.preview else "slow",
+                "-crf", str(args.crf), "-tune", "grain", "-c:a", "copy"]
+    cmd += [str(out)]
+
     print(f"input : {src}  ({info['width']}x{info['height']} @ {info['fps']:.3f} fps)")
     print(f"output: {out}")
-    print(f"look  : {' + '.join(bits)}")
+    print(f"look  : {summarize_settings(args)}")
 
     if args.dry_run:
         print("\n" + " ".join(f"'{c}'" if " " in c else c for c in cmd) + "\n")
-        return
+        res["ok"] = True
+        return res
 
     rc = subprocess.run(cmd).returncode
     if rc != 0:
-        sys.exit(rc)
+        res["error"] = f"ffmpeg exited with code {rc} (see console output above)"
+        print(f"FAILED: {res['error']}\n")
+        return res
+
+    res["ok"] = True
+    try:
+        o = probe(out)
+        res["fps_out"] = o["fps"]
+        res["dur"] = o["duration"]
+        res["size"] = out.stat().st_size
+        t = o["duration"] * 0.4
+        res["thumb_before"] = grab_thumb(src, t)
+        res["thumb_after"] = grab_thumb(out, t)
+    except (RuntimeError, OSError):
+        pass  # render succeeded; report just has fewer details
     print("done.\n")
+    return res
+
+
+def write_report(results: list, args, dest: Path) -> None:
+    """Single self-contained HTML file: before/after thumbnails, per-clip
+    status, and the settings used — visual proof the processing landed."""
+    e = html.escape
+    when = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    ok_n = sum(1 for r in results if r["ok"])
+    cards = []
+    for r in results:
+        if r["ok"]:
+            status = '<span class="ok">&#10003; processed</span>'
+            facts = []
+            if r["fps_in"] is not None and r["fps_out"] is not None:
+                facts.append(f"{r['fps_in']:g} fps &rarr; {r['fps_out']:g} fps")
+            if r["dur"]:
+                facts.append(f"{r['dur']:.1f} s")
+            if r["size"]:
+                facts.append(fmt_size(r["size"]))
+            facts.append(e(args.codec))
+            detail = " &middot; ".join(facts)
+            thumbs = (
+                f'<div class="pair">'
+                f'<figure><img src="{r["thumb_before"]}" alt=""><figcaption>before</figcaption></figure>'
+                f'<figure><img src="{r["thumb_after"]}" alt=""><figcaption>after</figcaption></figure>'
+                f"</div>" if r["thumb_before"] and r["thumb_after"] else ""
+            )
+        else:
+            status = '<span class="bad">&#10007; failed</span>'
+            detail = e(r["error"])
+            thumbs = ""
+        cards.append(
+            f'<section class="card"><header><h2>{e(r["src"].name)}</h2>{status}</header>'
+            f"{thumbs}<p>{detail}</p></section>"
+        )
+    doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>filmify report</title><style>
+body{{background:#141210;color:#e8e2d8;font:15px/1.5 system-ui,sans-serif;padding:2rem;max-width:1060px;margin:0 auto}}
+h1{{font-weight:600;font-size:1.4rem;margin:0}}
+.meta{{color:#a89f90;margin:.3rem 0 2rem}}
+.card{{background:#1d1a17;border:1px solid #2c2722;border-radius:10px;padding:1rem 1.2rem;margin-bottom:1.2rem}}
+.card header{{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}}
+.card h2{{font-size:1.05rem;font-weight:600;margin:0;word-break:break-all}}
+.ok{{color:#8fc97c;white-space:nowrap}}.bad{{color:#e07a6a;white-space:nowrap}}
+.pair{{display:flex;gap:10px;margin:.8rem 0 .2rem;flex-wrap:wrap}}
+figure{{margin:0;flex:1;min-width:260px}}
+img{{width:100%;border-radius:6px;display:block}}
+figcaption{{color:#a89f90;font-size:.8rem;margin-top:.25rem;text-transform:uppercase;letter-spacing:.06em}}
+p{{color:#cfc7ba;margin:.5rem 0 0}}</style></head><body>
+<h1>filmify {e(__version__)} &mdash; {ok_n}/{len(results)} clip{"s" if len(results) != 1 else ""} processed</h1>
+<p class="meta">{e(when)} &middot; {e(summarize_settings(args))}</p>
+{"".join(cards)}</body></html>"""
+    dest.write_text(doc, encoding="utf-8")
 
 
 def main() -> None:
@@ -453,6 +563,8 @@ def main() -> None:
                     help="disable the built-in filmic tone curve (e.g. when your LUT includes one)")
     ap.add_argument("--no-vignette", action="store_true",
                     help="disable the vignette")
+    ap.add_argument("--no-report", action="store_true",
+                    help="skip writing/opening the HTML processing report")
     ap.add_argument("--crf", type=int, default=17,
                     help="x264 quality (lower = better; grain needs bitrate)")
     ap.add_argument("--dry-run", action="store_true",
@@ -498,6 +610,7 @@ def main() -> None:
     ext = ".mp4" if args.codec == "h264" else ".mov"
     print(f"filmify {__version__}\n")
 
+    results = []
     if args.input.is_dir():
         files = sorted(
             f for f in args.input.iterdir()
@@ -514,13 +627,32 @@ def main() -> None:
         print(f"batch : {len(files)} file(s) → {outdir}\n")
         for i, f in enumerate(files, 1):
             print(f"[{i}/{len(files)}]")
-            render(f, outdir / (f.stem + suffix + ext), args)
+            results.append(render(f, outdir / (f.stem + suffix + ext), args))
+        report_dir = outdir
     else:
         out = args.output or args.input.with_name(args.input.stem + suffix + ext)
         if args.output and args.codec != "h264" and out.suffix.lower() not in (".mov", ".mxf"):
             out = out.with_suffix(".mov")
             print(f"note  : {args.codec} needs a .mov container — output is {out.name}")
-        render(args.input, out, args)
+        results.append(render(args.input, out, args))
+        report_dir = out.parent
+
+    ok_n = sum(1 for r in results if r["ok"])
+    summary = f"{ok_n}/{len(results)} clip{'s' if len(results) != 1 else ''} ✓"
+    if not args.dry_run and not args.no_report:
+        report = report_dir / "filmify_report.html"
+        try:
+            write_report(results, args, report)
+            summary += f" · report: {report}"
+            try:
+                webbrowser.open(report.resolve().as_uri())
+            except Exception:
+                pass  # headless/odd environments: the file is still there
+        except OSError as exc:
+            print(f"note  : couldn't write report: {exc}")
+    print(summary)
+    if ok_n < len(results):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
