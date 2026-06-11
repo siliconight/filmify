@@ -1,0 +1,95 @@
+# filmify
+
+**The feel of film, without the film camera.**
+
+filmify is a lightweight, single-file tool for indie filmmakers. Point it at
+your digital footage and it applies the things that make film read as
+*cinema*: protected highlights that roll off instead of clipping, 24 fps
+motion with a 180° shutter feel, gentle softness, restrained color, halation
+glow around bright lights, and organic grain. No NLE, no plugins, no
+subscription — just Python and FFmpeg.
+
+## Requirements
+
+- Python 3.8+
+- [FFmpeg](https://ffmpeg.org) (`ffmpeg` and `ffprobe` on your PATH)
+
+Works on Windows, macOS, and Linux.
+
+## Quick start
+
+```sh
+python filmify.py myfootage.mp4
+```
+
+That's it — you get `myfootage_film.mp4` with the standard look.
+
+Shot on a phone at 60 fps? Conform it to 24 fps with proper motion blur:
+
+```sh
+python filmify.py myfootage.mp4 --conform
+```
+
+Got a film-stock LUT and a scanned grain plate? Use the real thing:
+
+```sh
+python filmify.py myfootage.mp4 --lut kodak_print.cube --grain-plate 35mm_grain.mp4
+```
+
+## Presets
+
+| Preset     | Feel                                          |
+|------------|-----------------------------------------------|
+| `subtle`   | Barely-there. Modern digital cinema finish.    |
+| `standard` | Clearly filmic without drawing attention.      |
+| `heavy`    | Vintage stock — soft, grainy, faded blacks.    |
+
+```sh
+python filmify.py clip.mp4 --look heavy
+```
+
+Every component can be overridden individually: `--grain`, `--halation`,
+`--soften`, `--saturation`, `--plate-opacity`, `--no-curve`,
+`--no-vignette`. Use `--dry-run` to print the FFmpeg command it builds
+without running it.
+
+## What the pipeline does (in order)
+
+1. **24 fps / 180° shutter conform** (`--conform`) — blends adjacent frames
+   from high-fps sources to synthesize natural motion blur, then drops to
+   24 fps. This is the single biggest "video vs film" tell.
+2. **Softening** — digital is too crisp; a gentle de-sharpen reads as glass.
+3. **Filmic tone curve** — S-curve with a soft shoulder. Pure white lands
+   below 100%, so highlights compress instead of blowing out. Blacks are
+   lifted a hair, like a print.
+4. **Film-stock LUT** (optional) — your `.cube` LUT supplies the color
+   character; filmify steps out of the way and skips its own split tone.
+5. **Color discipline** — mild desaturation, warm highlights, faintly cool
+   shadows. Restrained on purpose; skin stays natural.
+6. **Halation** — bright areas glow softly red-orange instead of clipping,
+   the way light bounces inside a real film base.
+7. **Grain** — a real scanned grain plate if you have one (looped and
+   overlay-blended), otherwise synthesized temporal grain weighted to luma
+   so it reads as silver grain, not sensor noise.
+8. **Vignette** — slight corner falloff, like a lens.
+
+Output is encoded with `x264 -tune grain` so the encoder doesn't smooth the
+texture back out.
+
+## What filmify can't do
+
+It finishes the look — it can't recover what the camera threw away. The
+biggest wins still happen on set:
+
+- **Expose to protect highlights** (or shoot a log/flat profile and grade).
+- **Light intentionally** — lighting does more for the film look than any
+  processing.
+- **Shoot 24 fps with a 180° shutter in camera** when your rig allows it.
+
+## Versioning
+
+Releases follow SemVer and are tagged in git. See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+Apache-2.0

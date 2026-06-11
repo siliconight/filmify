@@ -2,6 +2,7 @@
 """
 filmify — make digital video look like physical film.
 
+For indie filmmakers: the feel of cinema without owning a film camera.
 A single-file FFmpeg pipeline. No dependencies beyond ffmpeg/ffprobe on PATH.
 
 The processing chain (in order — order matters):
@@ -12,29 +13,28 @@ The processing chain (in order — order matters):
                         lenses + the film plane itself are slightly soft.
   3. Filmic tone curve  S-curve with a soft shoulder. Whites roll off and
                         never reach 100% — highlights are protected, never
-                        clipped. Blacks are lifted a hair (film never goes
-                        to true zero either).
-  4. Color discipline   Mild desaturation + a subtle warm-highlight /
-                        cool-shadow split tone. Restrained, not "teal &
-                        orange". Skin survives because saturation is pulled
-                        globally and gently rather than pushed anywhere.
-  5. Halation           Bright areas are isolated, blurred wide, tinted
-                        red-orange (the color of light bouncing off the
-                        film base back into the emulsion), and screened
-                        over the image. Lights glow instead of clipping.
-  6. Grain              Temporal, regenerated every frame, luma-weighted.
-                        Subtle by default.
-  7. Vignette           Very slight corner falloff, like a real lens.
+                        clipped. Blacks are lifted a hair.
+  4. Film-stock LUT     Optional .cube 3D LUT (Kodak/Fuji print emulations,
+                        etc.). When a LUT is supplied it owns the color
+                        character, so the built-in split tone is skipped.
+  5. Color discipline   Mild desaturation + a subtle warm-highlight /
+                        cool-shadow split tone (when no LUT is given).
+  6. Halation           Bright areas isolated, blurred wide, tinted
+                        red-orange, screened back over the image.
+  7. Grain              Real scanned grain plate (--grain-plate) overlaid
+                        and looped, or synthesized temporal luma-weighted
+                        grain as the fallback.
+  8. Vignette           Very slight corner falloff, like a real lens.
 
 Usage:
   python filmify.py input.mp4
-  python filmify.py input.mp4 -o graded.mp4 --look heavy
-  python filmify.py clip.mov --conform --grain 9 --halation 0.45
+  python filmify.py input.mp4 --look heavy --conform
+  python filmify.py clip.mov --lut kodak_2383.cube --grain-plate 35mm_grain.mp4
   python filmify.py clip.mov --dry-run        # print the ffmpeg command only
 
-Shoot advice this tool can't replace: expose to protect highlights (or shoot
-log/raw and grade first), light intentionally, shoot 24fps/180° in camera
-when you can. This tool finishes the look; it can't recover clipped whites.
+This tool finishes the look; it can't recover clipped whites. Expose to
+protect highlights (or shoot log/flat), light intentionally, and shoot
+24fps/180° in camera when you can.
 """
 
 import argparse
@@ -44,24 +44,26 @@ import subprocess
 import sys
 from pathlib import Path
 
+__version__ = "0.2.0"
+
 # ----------------------------------------------------------------------------
 # Look presets. Every value can be overridden from the CLI.
 # ----------------------------------------------------------------------------
 LOOKS = {
     "subtle": dict(
         soften=0.35, saturation=0.93, halation=0.22, halation_thresh=0.82,
-        grain=5, vignette="PI/7", black_lift=0.010, shoulder=0.965,
-        warmth=0.04,
+        grain=5, plate_opacity=0.30, vignette="PI/7", black_lift=0.010,
+        shoulder=0.965, warmth=0.04,
     ),
     "standard": dict(
         soften=0.55, saturation=0.88, halation=0.33, halation_thresh=0.78,
-        grain=7, vignette="PI/6", black_lift=0.015, shoulder=0.955,
-        warmth=0.06,
+        grain=7, plate_opacity=0.42, vignette="PI/6", black_lift=0.015,
+        shoulder=0.955, warmth=0.06,
     ),
     "heavy": dict(
         soften=0.85, saturation=0.82, halation=0.48, halation_thresh=0.72,
-        grain=11, vignette="PI/5", black_lift=0.025, shoulder=0.945,
-        warmth=0.09,
+        grain=11, plate_opacity=0.55, vignette="PI/5", black_lift=0.025,
+        shoulder=0.945, warmth=0.09,
     ),
 }
 
@@ -80,6 +82,16 @@ def probe(path: Path) -> dict:
     num, den = info["avg_frame_rate"].split("/")
     fps = float(num) / float(den) if float(den) else 0.0
     return {"fps": fps, "width": info["width"], "height": info["height"]}
+
+
+def fpath(path: Path) -> str:
+    """Escape a file path for use inside an ffmpeg filtergraph.
+
+    Filtergraph syntax treats ':' and '\\' specially, which breaks Windows
+    paths like C:\\luts\\film.cube. Forward slashes work fine on Windows.
+    """
+    s = str(path).replace("\\", "/").replace(":", "\\\\:")
+    return f"'{s}'"
 
 
 def tone_curve(black_lift: float, shoulder: float) -> str:
@@ -101,30 +113,24 @@ def tone_curve(black_lift: float, shoulder: float) -> str:
     return " ".join(f"{x:g}/{y:g}" for x, y in pts)
 
 
-def build_filtergraph(args, src_fps: float) -> str:
-    p = dict(LOOKS[args.look])  # copy preset, then apply overrides
-    if args.grain is not None:
-        p["grain"] = args.grain
-    if args.halation is not None:
-        p["halation"] = args.halation
-    if args.soften is not None:
-        p["soften"] = args.soften
-    if args.saturation is not None:
-        p["saturation"] = args.saturation
+def build_filtergraph(args, info: dict) -> str:
+    p = dict(LOOKS[args.look])  # copy preset, then apply CLI overrides
+    for key in ("grain", "halation", "soften", "saturation", "plate_opacity"):
+        v = getattr(args, key, None)
+        if v is not None:
+            p[key] = v
 
     chain = []
+    src_fps = info["fps"]
 
     # -- 1. Temporal conform: 24 fps + ~180° shutter via frame blending ------
     if args.conform:
         if src_fps > 30:
-            # Blend adjacent source frames to synthesize shutter blur,
-            # then decimate to 24. From 50/60fps this approximates a
-            # half-open (180°) shutter well.
-            chain.append("tmix=frames=2")
+            chain.append("tmix=frames=2")   # synthesize shutter blur
             chain.append("fps=24")
         elif src_fps > 24.5:
             chain.append("fps=24")
-        # already ~24 or 23.976: leave cadence alone
+        # already ~24 / 23.976: leave cadence alone
 
     # -- 2. Softening: negative unsharp == controlled blur -------------------
     if p["soften"] > 0:
@@ -133,21 +139,29 @@ def build_filtergraph(args, src_fps: float) -> str:
         )
 
     # -- 3. Filmic tone curve -------------------------------------------------
-    chain.append(f"curves=all='{tone_curve(p['black_lift'], p['shoulder'])}'")
+    if not args.no_curve:
+        chain.append(f"curves=all='{tone_curve(p['black_lift'], p['shoulder'])}'")
 
-    # -- 4. Color discipline --------------------------------------------------
-    chain.append(f"eq=saturation={p['saturation']:.2f}")
-    w = p["warmth"]
-    # warm highlights, faintly cool shadows — a classic print-stock split
-    chain.append(
-        f"colorbalance="
-        f"rh={w:.3f}:bh={-w * 0.5:.3f}:"      # highlights toward warm
-        f"rs={-w * 0.3:.3f}:bs={w * 0.4:.3f}"  # shadows faintly cool
-    )
+    # -- 4. Film-stock LUT ------------------------------------------------------
+    if args.lut:
+        chain.append(f"lut3d=file={fpath(args.lut)}")
 
-    graph = ",".join(chain)
+    # -- 5. Color discipline ----------------------------------------------------
+    if p["saturation"] != 1.0:
+        chain.append(f"eq=saturation={p['saturation']:.2f}")
+    if not args.lut:
+        # warm highlights, faintly cool shadows — a classic print-stock split.
+        # Skipped when a LUT is supplied: the LUT owns the color character.
+        w = p["warmth"]
+        chain.append(
+            f"colorbalance="
+            f"rh={w:.3f}:bh={-w * 0.5:.3f}:"
+            f"rs={-w * 0.3:.3f}:bs={w * 0.4:.3f}"
+        )
 
-    # -- 5. Halation: split → isolate highlights → blur → tint → screen ------
+    graph = ",".join(chain) if chain else "null"
+
+    # -- 6. Halation: split → isolate highlights → blur → tint → screen ------
     if p["halation"] > 0:
         t = p["halation_thresh"]
         hal = (
@@ -158,27 +172,40 @@ def build_filtergraph(args, src_fps: float) -> str:
         graph = (
             f"[0:v]{graph},split[base][hl];"
             f"[hl]{hal}[hal];"
-            f"[base][hal]blend=all_mode=screen:all_opacity={p['halation']:.2f}"
+            f"[base][hal]blend=all_mode=screen:all_opacity={p['halation']:.2f}[pre]"
         )
     else:
-        graph = f"[0:v]{graph}"
+        graph = f"[0:v]{graph}[pre]"
 
-    tail = []
+    # -- 7. Grain ----------------------------------------------------------------
+    w, h = info["width"], info["height"]
+    if args.grain_plate:
+        # Real scanned grain: loop it, scale to cover the frame, overlay-blend.
+        graph += (
+            f";[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"crop={w}:{h},format=yuv420p[gp];"
+            f"[pre][gp]blend=all_mode=overlay:all_opacity={p['plate_opacity']:.2f}:shortest=1[gr]"
+        )
+        tail = []
+    elif p["grain"] > 0:
+        # Synthesized fallback: temporal, regenerated per frame, luma-weighted
+        # so it reads as silver grain rather than RGB sensor noise.
+        g = int(p["grain"])
+        tail = [
+            f"noise=c0s={g}:c0f=t+u:"
+            f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u"
+        ]
+    else:
+        tail = []
 
-    # -- 6. Grain: temporal, regenerated per frame ----------------------------
-    if p["grain"] > 0:
-        g = p["grain"]
-        # stronger on luma, faint on chroma — reads as silver grain,
-        # not RGB sensor noise
-        tail.append(f"noise=c0s={g}:c0f=t+u:c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u")
-
-    # -- 7. Vignette -----------------------------------------------------------
+    # -- 8. Vignette ----------------------------------------------------------
     if not args.no_vignette:
         tail.append(f"vignette=angle={p['vignette']}")
 
     tail.append("format=yuv420p")
 
-    return graph + "," + ",".join(tail) + "[vout]"
+    last_label = "[gr]" if args.grain_plate else "[pre]"
+    return graph + f";{last_label}" + ",".join(tail) + "[vout]"
 
 
 def main() -> None:
@@ -189,18 +216,28 @@ def main() -> None:
     ap.add_argument("input", type=Path, help="input video file")
     ap.add_argument("-o", "--output", type=Path, default=None,
                     help="output file (default: <input>_film.mp4)")
+    ap.add_argument("-V", "--version", action="version",
+                    version=f"filmify {__version__}")
     ap.add_argument("--look", choices=LOOKS, default="standard",
                     help="overall intensity preset")
     ap.add_argument("--conform", action="store_true",
                     help="convert to 24 fps with simulated 180-degree shutter blur")
+    ap.add_argument("--lut", type=Path, default=None, metavar="FILE.cube",
+                    help="apply a film-stock 3D LUT (.cube); disables built-in split tone")
+    ap.add_argument("--grain-plate", type=Path, default=None, metavar="FILE",
+                    help="overlay a real scanned grain plate (video file, looped)")
+    ap.add_argument("--plate-opacity", type=float, default=None, metavar="0-1",
+                    help="grain plate blend opacity override")
     ap.add_argument("--grain", type=int, default=None, metavar="0-20",
-                    help="grain strength override (0 disables)")
+                    help="synthesized grain strength override (0 disables)")
     ap.add_argument("--halation", type=float, default=None, metavar="0-1",
                     help="halation/bloom strength override (0 disables)")
     ap.add_argument("--soften", type=float, default=None, metavar="0-1.5",
                     help="softening strength override (0 disables)")
     ap.add_argument("--saturation", type=float, default=None, metavar="0-2",
                     help="saturation override (1 = unchanged)")
+    ap.add_argument("--no-curve", action="store_true",
+                    help="disable the built-in filmic tone curve (e.g. when your LUT includes one)")
     ap.add_argument("--no-vignette", action="store_true",
                     help="disable the vignette")
     ap.add_argument("--crf", type=int, default=17,
@@ -214,13 +251,19 @@ def main() -> None:
             sys.exit(f"error: {tool} not found on PATH")
     if not args.input.exists():
         sys.exit(f"error: {args.input} not found")
+    for opt in ("lut", "grain_plate"):
+        f = getattr(args, opt)
+        if f and not f.exists():
+            sys.exit(f"error: {f} not found")
 
     out = args.output or args.input.with_name(args.input.stem + "_film.mp4")
     info = probe(args.input)
-    graph = build_filtergraph(args, info["fps"])
+    graph = build_filtergraph(args, info)
 
-    cmd = [
-        "ffmpeg", "-y", "-i", str(args.input),
+    cmd = ["ffmpeg", "-y", "-i", str(args.input)]
+    if args.grain_plate:
+        cmd += ["-stream_loop", "-1", "-i", str(args.grain_plate)]
+    cmd += [
         "-filter_complex", graph,
         "-map", "[vout]", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "slow", "-crf", str(args.crf),
@@ -230,9 +273,17 @@ def main() -> None:
         str(out),
     ]
 
+    print(f"filmify {__version__}")
     print(f"input : {args.input}  ({info['width']}x{info['height']} @ {info['fps']:.3f} fps)")
     print(f"output: {out}")
-    print(f"look  : {args.look}" + ("  + 24fps/180° conform" if args.conform else ""))
+    bits = [args.look]
+    if args.conform:
+        bits.append("24fps/180° conform")
+    if args.lut:
+        bits.append(f"LUT: {args.lut.name}")
+    if args.grain_plate:
+        bits.append(f"grain plate: {args.grain_plate.name}")
+    print(f"look  : {' + '.join(bits)}")
     if args.dry_run:
         print("\n" + " ".join(f"'{c}'" if " " in c else c for c in cmd))
         return
