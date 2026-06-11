@@ -92,6 +92,26 @@ Happy with it? Run the whole shoot day in one go (outputs land in
 python filmify.py shoot_day1/ --look heavy --weave 1.5 --conform
 ```
 
+## Shooting log? Develop it first
+
+If your camera records S-Log3, V-Log, C-Log, Apple Log, or D-Log, tell
+filmify so the look lands on properly developed footage instead of the flat
+gray log image:
+
+```sh
+python filmify.py clip.mp4 --input-log slog3          # Sony
+python filmify.py clip.mp4 --input-log vlog           # Panasonic
+python filmify.py clip.mp4 --input-log clog3_to_709.cube   # any maker's official LUT
+```
+
+`slog3` and `vlog` use the manufacturers' published formulas with a soft
+highlight shoulder; for other cameras, download the maker's free
+log-to-Rec.709 .cube and point `--input-log` at it. Pair with `--depth 10`
+and `--codec prores` to keep all that captured range through the pipeline:
+10-bit processing avoids banding in skies and soft light, and DNxHR
+automatically switches to its 10-bit HQX profile. An occasional vintage
+light leak is there when you want it: `--leak`.
+
 ## Workflows
 
 **1. Graded dailies** — shoot, batch-process, edit the graded clips.

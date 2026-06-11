@@ -56,7 +56,69 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
+
+LOG_PRESETS = ("slog3", "vlog", "cineon")
+
+
+def _slog3_to_linear(x: float) -> float:
+    # Sony S-Log3 (published formula); 18% gray encodes at ~41% (cv 420)
+    cv = x * 1023.0
+    if cv >= 171.2102946929:
+        return (10 ** ((cv - 420.0) / 261.5)) * (0.18 + 0.01) - 0.01
+    return (cv - 95.0) * 0.01125 / (171.2102946929 - 95.0)
+
+
+def _vlog_to_linear(x: float) -> float:
+    # Panasonic V-Log (published formula); 18% gray encodes at 42.3%
+    b, c, d = 0.00873, 0.241514, 0.598206
+    if x < 0.181:
+        return (x - 0.125) / 5.6
+    return 10 ** ((x - d) / c) - b
+
+
+def _cineon_to_linear(x: float) -> float:
+    # Classic Cineon film-scan curve; a reasonable generic for unlisted logs
+    cv = x * 1023.0
+    blk = 10 ** ((95.0 - 685.0) / 300.0)
+    return (10 ** ((cv - 685.0) / 300.0) - blk) / (1.0 - blk)
+
+
+_LOG_DECODE = {"slog3": _slog3_to_linear, "vlog": _vlog_to_linear,
+               "cineon": _cineon_to_linear}
+
+
+def _linear_to_display(lin: float) -> float:
+    """Scene linear -> BT.709 display, with a smooth highlight shoulder so
+    the extended range log captured compresses instead of clipping —
+    the protected-highlights philosophy, applied at development time."""
+    lin = max(0.0, lin)
+    k = 0.6  # shoulder knee: identity below, tanh rolloff above
+    if lin > k:
+        import math
+        lin = k + (1.0 - k) * math.tanh((lin - k) / (1.0 - k))
+    # BT.709 OETF
+    if lin < 0.018:
+        y = 4.5 * lin
+    else:
+        y = 1.099 * (lin ** 0.45) - 0.099
+    return min(1.0, max(0.0, y))
+
+
+def make_log_lut(curve: str) -> Path:
+    """Generate a 1D .cube LUT (log -> display) in the temp dir."""
+    import tempfile
+    decode = _LOG_DECODE[curve]
+    n = 4096
+    lines = [f'TITLE "filmify {curve} to display"', f"LUT_1D_SIZE {n}"]
+    for i in range(n):
+        y = _linear_to_display(decode(i / (n - 1)))
+        lines.append(f"{y:.6f} {y:.6f} {y:.6f}")
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=f"_{curve}.cube", delete=False, encoding="utf-8")
+    f.write("\n".join(lines) + "\n")
+    f.close()
+    return Path(f.name)
 
 QUICKSTART = f"""filmify {__version__} — make digital video look like physical film.
 
@@ -79,6 +141,7 @@ LOOK_KEYS = [
     "look", "bw", "conform", "weave", "grain", "halation", "soften",
     "saturation", "chroma_soften", "plate_opacity", "no_curve",
     "no_vignette", "crf", "codec", "lut", "grain_plate",
+    "input_log", "leak", "depth",
 ]
 
 # Resolved at startup by find_tool(); plain names work as a fallback.
@@ -227,6 +290,15 @@ def build_filtergraph(args, info: dict) -> str:
                # halves share cadence and the split compares only the look
     src_fps = info["fps"]
     w_px, h_px = info["width"], info["height"]
+    out_fps = 24 if (args.conform and src_fps > 24.5) else (src_fps or 24)
+
+    depth10 = args.depth == 10
+    # working format for the filter chain; final format for the encoder
+    wfmt = "yuv444p10le" if depth10 else "yuv420p"
+    if depth10:
+        ofmt = "yuv422p10le" if args.codec in ("prores", "dnxhr") else "yuv420p10le"
+    else:
+        ofmt = "yuv420p"
 
     # -- 1. Temporal conform: 24 fps + ~180° shutter via frame blending ------
     if args.conform:
@@ -237,15 +309,23 @@ def build_filtergraph(args, info: dict) -> str:
             pre.append("fps=24")
         # already ~24 / 23.976: leave cadence alone
 
-    # -- 2. Softening: negative unsharp == controlled blur -------------------
+    # -- 2. Working bit depth --------------------------------------------------
+    chain.append(f"format={wfmt}")
+
+    # -- 3. Log input development: camera log -> display, via generated or
+    #       manufacturer LUT. Runs first so the film look lands on properly
+    #       developed footage instead of the flat log image.
+    if getattr(args, "_loglut", None):
+        kind, lpath = args._loglut
+        chain.append(f"lut{kind}=file={fpath(lpath)}")
+
+    # -- 4. Softening: negative unsharp == controlled blur -------------------
     if p["soften"] > 0:
         chain.append(
             f"unsharp=luma_msize_x=7:luma_msize_y=7:luma_amount=-{p['soften']:.2f}"
         )
 
-    # -- 3. Gate weave: slow frame drift, two layered sines per axis ---------
-    # (Pure random() reads as digital jitter; layered slow sines read as a
-    #  projector gate.) Crops a small margin, drifts inside it, scales back.
+    # -- 5. Gate weave: slow frame drift, two layered sines per axis ---------
     if args.weave > 0:
         a = args.weave
         m = max(2, int(a * 1.6) + 1)
@@ -256,19 +336,19 @@ def build_filtergraph(args, info: dict) -> str:
         )
         chain.append(f"scale={w_px}:{h_px},setsar=1")
 
-    # -- 4. B&W mode: panchromatic-weighted mono before the tone curve -------
+    # -- 6. B&W mode: panchromatic-weighted mono before the tone curve -------
     if args.bw:
         chain.append(BW_MIX)
 
-    # -- 5. Filmic tone curve (per-preset contrast character) -----------------
+    # -- 7. Filmic tone curve (per-preset contrast character) -----------------
     if not args.no_curve:
         chain.append(f"curves=all='{p['curve']}'")
 
-    # -- 6. Film-stock LUT ------------------------------------------------------
+    # -- 8. Film-stock LUT ------------------------------------------------------
     if args.lut:
         chain.append(f"lut3d=file={fpath(args.lut)}")
 
-    # -- 7. Color discipline ----------------------------------------------------
+    # -- 9. Color discipline ----------------------------------------------------
     if not args.bw:
         if p["saturation"] != 1.0:
             chain.append(f"eq=saturation={p['saturation']:.2f}")
@@ -282,10 +362,9 @@ def build_filtergraph(args, info: dict) -> str:
                 f"rs={-w * 0.3:.3f}:bs={w * 0.4:.3f}"
             )
         # Chroma softening: film's color layers resolve softer than its
-        # luminance. Blur ONLY the chroma planes — detail stays, the
-        # digital crispness of color edges goes.
+        # luminance. Blur ONLY the chroma planes.
         if p["chroma"] > 0:
-            chain.append(f"format=yuv420p,gblur=sigma={p['chroma']:.2f}:planes=6")
+            chain.append(f"format={wfmt},gblur=sigma={p['chroma']:.2f}:planes=6")
 
     body = ",".join(chain) if chain else "null"
     pre_str = ",".join(pre) if pre else "null"
@@ -294,7 +373,7 @@ def build_filtergraph(args, info: dict) -> str:
     else:
         prefix = "[0:v]" + (",".join(pre) + "," if pre else "")
 
-    # -- 8. Halation: split → isolate highlights → blur → tint → screen ------
+    # -- 10. Halation: split → isolate highlights → blur → tint → screen -----
     if p["halation"] > 0:
         t = p["halation_thresh"]
         # B&W stock halos stay neutral; color stock halos go red-orange
@@ -312,41 +391,79 @@ def build_filtergraph(args, info: dict) -> str:
     else:
         graph = f"{prefix}{body}[pre]"
 
-    # -- 9. Grain ----------------------------------------------------------------
+    cur = "[pre]"
+
+    # -- 11. Light leak: a slow radial warm glow from the frame edge that the
+    #        gradients source cycles in and out of existence over time —
+    #        appears for a stretch, fades for a longer one, like a real
+    #        intermittent body leak.
+    if args.leak > 0:
+        # Screen-blending must happen in RGB: applying the screen formula to
+        # YUV chroma planes (0.5-centered) shifts neutral colors toward
+        # magenta across the whole frame (found the hard way).
+        rgbfmt = "gbrp10le" if depth10 else "gbrp"
+        leak = (
+            f"gradients=s={w_px}x{h_px}:type=radial:n=6:"
+            f"x0=0:y0={int(h_px * 0.25)}:x1={int(w_px * 0.55)}:y1={h_px}:"
+            f"c0=0xFF7A30:c1=0x000000:c2=0x000000:c3=0x000000:"
+            f"c4=0x2A1004:c5=0x000000:"
+            f"speed=0.008:rate={out_fps:g},format={rgbfmt}"
+        )
+        graph += (
+            f";{leak}[leakg];"
+            f"{cur}format={rgbfmt}[lkbase];"
+            f"[lkbase][leakg]blend=all_mode=screen:all_opacity={args.leak:.2f}:shortest=1[lk]"
+        )
+        cur = "[lk]"
+
+    # -- 12. Grain --------------------------------------------------------------
     if args.grain_plate:
         # Real scanned grain: loop it, scale to cover the frame, overlay-blend.
         graph += (
             f";[1:v]scale={w_px}:{h_px}:force_original_aspect_ratio=increase,"
-            f"crop={w_px}:{h_px},format=yuv420p[gp];"
-            f"[pre][gp]blend=all_mode=overlay:all_opacity={p['plate_opacity']:.2f}:shortest=1[gr]"
+            f"crop={w_px}:{h_px},format={wfmt}[gp];"
+            f"{cur}[gp]blend=all_mode=overlay:all_opacity={p['plate_opacity']:.2f}:shortest=1[gr]"
         )
-        tail = []
+        cur = "[gr]"
     elif p["grain"] > 0:
-        # Synthesized fallback: temporal, regenerated per frame, luma-weighted
-        # so it reads as silver grain rather than RGB sensor noise.
-        # B&W stocks wear their grain more openly — bump it.
+        # Synthesized: temporal, regenerated per frame, luma-weighted so it
+        # reads as silver grain. B&W stocks wear their grain more openly.
+        # (The noise filter processes at up to 16-bit, so this is safe in
+        # 10-bit mode too.)
         g = int(p["grain"] * (1.5 if args.bw else 1.0))
-        tail = [
-            f"noise=c0s={g}:c0f=t+u:"
-            f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u"
-        ]
-    else:
-        tail = []
+        graph += (
+            f";{cur}noise=c0s={g}:c0f=t+u:"
+            f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u[gn]"
+        )
+        cur = "[gn]"
 
-    # -- 10. Vignette ----------------------------------------------------------
+    # -- 13. Vignette ------------------------------------------------------------
     if not args.no_vignette:
-        tail.append(f"vignette=angle={p['vignette']}")
+        if depth10:
+            # The vignette filter is 8-bit-only (verified empirically) and
+            # would silently bottleneck the chain. Instead: render the
+            # falloff as an 8-bit mask on a white source, upconvert, smooth
+            # the quantization steps away with a blur, and multiply it into
+            # the luma plane only (chroma passes through untouched).
+            graph += (
+                f";color=c=white:s={w_px}x{h_px}:r={out_fps:g},"
+                f"vignette=angle={p['vignette']},format={wfmt},gblur=sigma=3[vm];"
+                f"{cur}[vm]blend=c0_mode=multiply:"
+                f"c1_mode=normal:c1_opacity=0:c2_mode=normal:c2_opacity=0:"
+                f"shortest=1[vg]"
+            )
+            cur = "[vg]"
+        else:
+            graph += f";{cur}vignette=angle={p['vignette']}[vg]"
+            cur = "[vg]"
 
-    tail.append("format=yuv420p")
-
-    last_label = "[gr]" if args.grain_plate else "[pre]"
+    # -- 14. Final format + compare combiner --------------------------------
     out_label = "[outp]" if args.compare else "[vout]"
-    graph = graph + f";{last_label}" + ",".join(tail) + out_label
+    graph += f";{cur}format={ofmt}{out_label}"
 
-    # -- Compare: left half original, right half graded, thin divider --------
     if args.compare:
         graph += (
-            f";[orig]format=yuv420p,crop=w=iw/2:h=ih:x=0:y=0,setsar=1[L];"
+            f";[orig]format={ofmt},crop=w=iw/2:h=ih:x=0:y=0,setsar=1[L];"
             f"[outp]crop=w=iw/2:h=ih:x=iw/2:y=0,setsar=1[R];"
             f"[L][R]hstack,"
             f"drawbox=x=iw/2-1:y=0:w=2:h=ih:color=white@0.6:t=fill[vout]"
@@ -357,6 +474,11 @@ def build_filtergraph(args, info: dict) -> str:
 
 def summarize_settings(args) -> str:
     bits = [args.look]
+    if getattr(args, "input_log", None):
+        n = str(args.input_log)
+        bits.append(f"log: {Path(n).name if n.lower() not in LOG_PRESETS else n}")
+    if args.depth == 10:
+        bits.append("10-bit")
     if args.codec != "h264":
         bits.append(args.codec)
     if args.bw:
@@ -365,6 +487,8 @@ def summarize_settings(args) -> str:
         bits.append("24fps/180° conform")
     if args.weave > 0:
         bits.append(f"weave {args.weave:g}px")
+    if args.leak > 0:
+        bits.append(f"leak {args.leak:g}")
     if args.lut:
         bits.append(f"LUT: {args.lut.name}")
     if args.grain_plate:
@@ -427,9 +551,14 @@ def render(src: Path, out: Path, args) -> dict:
         cmd += ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0",
                 "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"]
     elif args.codec == "dnxhr":
-        # DNxHR HQ — edit-friendly mezzanine (Resolve, Premiere, Avid)
-        cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq",
-                "-pix_fmt", "yuv422p", "-c:a", "pcm_s16le"]
+        # DNxHR — edit-friendly mezzanine (Resolve, Premiere, Avid).
+        # HQX is the 10-bit profile; HQ is 8-bit.
+        if args.depth == 10:
+            cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hqx",
+                    "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"]
+        else:
+            cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq",
+                    "-pix_fmt", "yuv422p", "-c:a", "pcm_s16le"]
     else:
         # h264 — delivery codec; fine for a finish pass, poor for editing
         cmd += ["-c:v", "libx264",
@@ -589,6 +718,19 @@ def main() -> None:
                     help="disable the built-in filmic tone curve (e.g. when your LUT includes one)")
     ap.add_argument("--no-vignette", action="store_true",
                     help="disable the vignette")
+    ap.add_argument("--input-log", type=str, default=None, metavar="CURVE|FILE.cube",
+                    help="develop log footage first: 'slog3' (Sony), 'vlog' "
+                         "(Panasonic), 'cineon' (generic), or a path to your "
+                         "camera maker's official log-to-709 3D .cube LUT "
+                         "(use that for C-Log, Apple Log, D-Log, etc.)")
+    ap.add_argument("--leak", nargs="?", const=0.3, type=float, default=0.0,
+                    metavar="0-1",
+                    help="intermittent warm light leak from the frame edge "
+                         "(off by default; bare flag = 0.3)")
+    ap.add_argument("--depth", type=int, choices=(8, 10), default=8,
+                    help="internal processing bit depth; 10 reduces banding "
+                         "in gradients and survives further grading better "
+                         "(pairs with --codec prores or dnxhr)")
     ap.add_argument("--no-report", action="store_true",
                     help="skip writing/opening the HTML processing report")
     ap.add_argument("--crf", type=int, default=17,
@@ -626,6 +768,20 @@ def main() -> None:
         apply_look_file(args, ap)
     if args.save_look:
         save_look_file(args)
+
+    args._loglut = None
+    _loglut_tmp = None
+    if args.input_log:
+        name = str(args.input_log).lower()
+        if name in LOG_PRESETS:
+            _loglut_tmp = make_log_lut(name)
+            args._loglut = ("1d", _loglut_tmp)
+        else:
+            lp = Path(args.input_log)
+            if not lp.exists():
+                sys.exit(f"error: log LUT not found: {lp} "
+                         f"(presets: {', '.join(LOG_PRESETS)})")
+            args._loglut = ("3d", lp)
 
     if args.compare:
         suffix = "_compare"
@@ -677,6 +833,11 @@ def main() -> None:
         except OSError as exc:
             print(f"note  : couldn't write report: {exc}")
     print(summary)
+    if _loglut_tmp:
+        try:
+            _loglut_tmp.unlink()
+        except OSError:
+            pass
     if ok_n < len(results):
         sys.exit(1)
 

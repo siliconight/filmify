@@ -3,6 +3,35 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.9.0] — 2026-06-11
+
+The roadmap release: log input, light leaks, 10-bit pipeline.
+
+### Added
+- Log footage development (`--input-log`): `slog3` (Sony) and `vlog`
+  (Panasonic) via LUTs generated from the manufacturers' published formulas
+  (mid-gray anchors verified numerically: 0.180 / 0.179), `cineon` as a
+  reasonable generic, or a path to your camera maker's official
+  log-to-709 3D .cube (the right answer for C-Log, Apple Log, D-Log).
+  Conversion runs before the look, with a smooth tanh highlight shoulder —
+  the extended range compresses instead of clipping. Persisted in look files.
+- Light leaks (`--leak [0-1]`, off by default): an intermittent warm radial
+  glow from the frame edge that cycles in and out of existence over time,
+  built from an animated gradients source. Blended in RGB — screen-blending
+  in YUV shifts the entire frame magenta (caught in frame-extraction
+  testing).
+- 10-bit pipeline (`--depth 10`): the filter chain processes at 10-bit,
+  reducing banding in skies, soft lighting, and halation, and leaving more
+  room for further grading. Output: ProRes stays yuv422p10le, DNxHR switches
+  to the HQX profile (10-bit), h264 outputs yuv420p10le. Filter support was
+  verified empirically; the one 8-bit-only filter (vignette) is replaced in
+  10-bit mode by a blurred luma-multiply mask so the chain never silently
+  bottlenecks to 8-bit.
+
+### Notes
+- Synthesized grain (noise) processes at up to 16-bit, so it's safe in
+  10-bit mode — better than previously documented.
+
 ## [0.8.0] — 2026-06-11
 
 First-time-user experience release: closing the gap between download and
