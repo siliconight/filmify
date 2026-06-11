@@ -3,6 +3,16 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.5.0] — 2026-06-11
+
+### Added
+- Compare mode (`--compare`): split-screen output with the original on the
+  left half and the graded image on the right, separated by a thin divider
+  line. Temporal conform applies to *both* halves so cadence matches and the
+  split compares only the look. Output gets a `_compare` suffix and batch
+  mode skips compare files on reruns. Pairs with `--preview` for fast look
+  dialing.
+
 ## [0.4.0] — 2026-06-11
 
 ### Added

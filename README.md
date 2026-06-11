@@ -36,10 +36,11 @@ Got a film-stock LUT and a scanned grain plate? Use the real thing:
 python filmify.py myfootage.mp4 --lut kodak_print.cube --grain-plate 35mm_grain.mp4
 ```
 
-Dialing in a look? Preview renders just the first 5 seconds, fast:
+Dialing in a look? `--compare --preview` renders a fast 5-second
+split-screen — original on the left, graded on the right:
 
 ```sh
-python filmify.py myfootage.mp4 --look heavy --weave 1.5 --preview
+python filmify.py myfootage.mp4 --look heavy --weave 1.5 --compare --preview
 ```
 
 Happy with it? Run the whole shoot day in one go (outputs land in

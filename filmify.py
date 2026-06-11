@@ -131,16 +131,18 @@ def build_filtergraph(args, info: dict) -> str:
         p["chroma"] = args.chroma_soften
 
     chain = []
+    pre = []   # temporal conform runs before the compare split, so both
+               # halves share cadence and the split compares only the look
     src_fps = info["fps"]
     w_px, h_px = info["width"], info["height"]
 
     # -- 1. Temporal conform: 24 fps + ~180° shutter via frame blending ------
     if args.conform:
         if src_fps > 30:
-            chain.append("tmix=frames=2")   # synthesize shutter blur
-            chain.append("fps=24")
+            pre.append("tmix=frames=2")   # synthesize shutter blur
+            pre.append("fps=24")
         elif src_fps > 24.5:
-            chain.append("fps=24")
+            pre.append("fps=24")
         # already ~24 / 23.976: leave cadence alone
 
     # -- 2. Softening: negative unsharp == controlled blur -------------------
@@ -193,7 +195,12 @@ def build_filtergraph(args, info: dict) -> str:
         if p["chroma"] > 0:
             chain.append(f"format=yuv420p,gblur=sigma={p['chroma']:.2f}:planes=6")
 
-    graph = ",".join(chain) if chain else "null"
+    body = ",".join(chain) if chain else "null"
+    pre_str = ",".join(pre) if pre else "null"
+    if args.compare:
+        prefix = f"[0:v]{pre_str},split[orig][pin];[pin]"
+    else:
+        prefix = "[0:v]" + (",".join(pre) + "," if pre else "")
 
     # -- 8. Halation: split → isolate highlights → blur → tint → screen ------
     if p["halation"] > 0:
@@ -206,12 +213,12 @@ def build_filtergraph(args, info: dict) -> str:
             f"{tint}"
         )
         graph = (
-            f"[0:v]{graph},split[base][hl];"
+            f"{prefix}{body},split[base][hl];"
             f"[hl]{hal}[hal];"
             f"[base][hal]blend=all_mode=screen:all_opacity={p['halation']:.2f}[pre]"
         )
     else:
-        graph = f"[0:v]{graph}[pre]"
+        graph = f"{prefix}{body}[pre]"
 
     # -- 9. Grain ----------------------------------------------------------------
     if args.grain_plate:
@@ -241,7 +248,19 @@ def build_filtergraph(args, info: dict) -> str:
     tail.append("format=yuv420p")
 
     last_label = "[gr]" if args.grain_plate else "[pre]"
-    return graph + f";{last_label}" + ",".join(tail) + "[vout]"
+    out_label = "[outp]" if args.compare else "[vout]"
+    graph = graph + f";{last_label}" + ",".join(tail) + out_label
+
+    # -- Compare: left half original, right half graded, thin divider --------
+    if args.compare:
+        graph += (
+            f";[orig]format=yuv420p,crop=w=iw/2:h=ih:x=0:y=0,setsar=1[L];"
+            f"[outp]crop=w=iw/2:h=ih:x=iw/2:y=0,setsar=1[R];"
+            f"[L][R]hstack,"
+            f"drawbox=x=iw/2-1:y=0:w=2:h=ih:color=white@0.6:t=fill[vout]"
+        )
+
+    return graph
 
 
 def render(src: Path, out: Path, args) -> None:
@@ -280,6 +299,8 @@ def render(src: Path, out: Path, args) -> None:
         bits.append(f"grain plate: {args.grain_plate.name}")
     if args.preview:
         bits.append(f"preview {args.preview:g}s")
+    if args.compare:
+        bits.append("compare split")
     print(f"input : {src}  ({info['width']}x{info['height']} @ {info['fps']:.3f} fps)")
     print(f"output: {out}")
     print(f"look  : {' + '.join(bits)}")
@@ -313,6 +334,10 @@ def main() -> None:
                     metavar="SECONDS",
                     help="render only the first N seconds (default 5) with a fast "
                          "encode, for quick look iteration")
+    ap.add_argument("--compare", action="store_true",
+                    help="split-screen output: left half original, right half "
+                         "graded, with a divider line — for dialing in a look "
+                         "(pairs well with --preview)")
     ap.add_argument("--lut", type=Path, default=None, metavar="FILE.cube",
                     help="apply a film-stock 3D LUT (.cube); disables built-in split tone")
     ap.add_argument("--grain-plate", type=Path, default=None, metavar="FILE",
@@ -355,7 +380,12 @@ def main() -> None:
         if f and not f.exists():
             sys.exit(f"error: {f} not found")
 
-    suffix = "_preview" if args.preview else "_film"
+    if args.compare:
+        suffix = "_compare"
+    elif args.preview:
+        suffix = "_preview"
+    else:
+        suffix = "_film"
     print(f"filmify {__version__}\n")
 
     if args.input.is_dir():
@@ -363,7 +393,7 @@ def main() -> None:
             f for f in args.input.iterdir()
             if f.is_file() and f.suffix.lower() in VIDEO_EXTS
             # don't reprocess our own outputs on a rerun
-            and not f.stem.endswith(("_film", "_preview"))
+            and not f.stem.endswith(("_film", "_preview", "_compare"))
         )
         if not files:
             sys.exit(f"error: no video files found in {args.input}")
