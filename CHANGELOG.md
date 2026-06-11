@@ -3,6 +3,30 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.10.0] — 2026-06-11
+
+### Added
+- Self-bootstrapping Mac launcher: `filmify-drop.command` now sets up its
+  own dependencies on first run. Missing Python triggers macOS's own
+  signed "install command line developer tools" dialog (which includes
+  Python) with plain-language instructions. Missing FFmpeg prompts for
+  consent, then downloads the official static build for the detected
+  architecture — Intel from evermeet.cx (the build linked from
+  ffmpeg.org), Apple Silicon from ffmpeg.martin-riedl.de — saves it next
+  to the script (nothing system-wide), clears quarantine, and verifies the
+  binary actually executes before proceeding. Download failures and
+  wrong-architecture binaries produce clear guidance instead of cryptic
+  errors. The full flow was tested end to end with simulated downloads.
+- README Mac quick start rewritten as five concrete steps (download ZIP →
+  right-click Open → Apple's Python dialog → FFmpeg consent → drag clip),
+  noting that setup steps happen only once.
+
+### Security note
+- The launcher downloads FFmpeg binaries from third-party build servers
+  (the standard distribution path for static macOS FFmpeg — ffmpeg.org
+  itself links to these). It always asks before downloading, states the
+  source, and never installs system-wide.
+
 ## [0.9.0] — 2026-06-11
 
 The roadmap release: log input, light leaks, 10-bit pipeline.

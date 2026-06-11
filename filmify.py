@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 LOG_PRESETS = ("slog3", "vlog", "cineon")
 

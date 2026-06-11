@@ -13,9 +13,23 @@ subscription — just Python and FFmpeg.
 
 **Easiest start (no terminal needed):**
 - **Windows** — drag a clip (or a whole folder) onto `filmify-drop.bat`.
-- **Mac** — double-click `filmify-drop.command`, drag your clip into the
-  window, press Return. (First time: right-click → Open if macOS warns
-  about an unidentified developer.)
+- **Mac** — five steps, total:
+  1. On the GitHub page: green **Code** button → **Download ZIP**, then
+     double-click the ZIP to unpack it.
+  2. **Right-click** `filmify-drop.command` → **Open** → **Open**. (Plain
+     double-clicking gets blocked the first time — this is macOS being
+     cautious about downloaded scripts; after once, double-click works.)
+  3. If a macOS dialog offers to install command line developer tools,
+     click **Install** and run the file again when it finishes — that's
+     Apple's own installer giving you Python.
+  4. filmify offers to download FFmpeg (the free video engine) for your
+     Mac — Intel or Apple Silicon is detected automatically, the official
+     static build is saved next to the script, nothing installs
+     system-wide. Press Return to accept.
+  5. Drag your clip into the window, press Return. A split-screen preview
+     renders and a before/after report opens in your browser.
+
+  Steps 2–4 happen once; after that it's just double-click, drag, Return.
 
 Either way you get a fast split-screen preview — your footage on the left,
 the film look on the right — and a report opens in your browser.
