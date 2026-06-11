@@ -3,6 +3,24 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.3.0] — 2026-06-11
+
+### Added
+- Preview mode (`--preview [seconds]`, default 5): renders only the first
+  N seconds with a fast encode preset, for quick look iteration before
+  committing to a full render.
+- Batch processing: pass a folder as input and every video file in it is
+  processed into a `filmified/` subfolder (or `-o <folder>`). Files already
+  carrying a `_film`/`_preview` suffix are skipped, so reruns are safe.
+- Gate weave (`--weave PX`): slow frame drift built from layered sines per
+  axis — reads as film transport through a projector gate, not digital
+  jitter. Off by default; 1–2 px is the sweet spot. Aspect ratio is
+  preserved (`setsar=1` after the scale-back).
+
+### Changed
+- ffmpeg output quieted to warnings + progress stats so batch runs are
+  readable.
+
 ## [0.2.0] — 2026-06-11
 
 ### Added

@@ -36,6 +36,19 @@ Got a film-stock LUT and a scanned grain plate? Use the real thing:
 python filmify.py myfootage.mp4 --lut kodak_print.cube --grain-plate 35mm_grain.mp4
 ```
 
+Dialing in a look? Preview renders just the first 5 seconds, fast:
+
+```sh
+python filmify.py myfootage.mp4 --look heavy --weave 1.5 --preview
+```
+
+Happy with it? Run the whole shoot day in one go (outputs land in
+`shoot_day1/filmified/`; reruns skip already-processed files):
+
+```sh
+python filmify.py shoot_day1/ --look heavy --weave 1.5 --conform
+```
+
 ## Presets
 
 | Preset     | Feel                                          |
@@ -49,7 +62,7 @@ python filmify.py clip.mp4 --look heavy
 ```
 
 Every component can be overridden individually: `--grain`, `--halation`,
-`--soften`, `--saturation`, `--plate-opacity`, `--no-curve`,
+`--soften`, `--saturation`, `--plate-opacity`, `--weave`, `--preview`, `--no-curve`,
 `--no-vignette`. Use `--dry-run` to print the FFmpeg command it builds
 without running it.
 
@@ -59,19 +72,21 @@ without running it.
    from high-fps sources to synthesize natural motion blur, then drops to
    24 fps. This is the single biggest "video vs film" tell.
 2. **Softening** — digital is too crisp; a gentle de-sharpen reads as glass.
-3. **Filmic tone curve** — S-curve with a soft shoulder. Pure white lands
+3. **Gate weave** (`--weave`) — optional slow frame drift, like film moving
+   through a projector gate. Layered sine motion, not random jitter.
+4. **Filmic tone curve** — S-curve with a soft shoulder. Pure white lands
    below 100%, so highlights compress instead of blowing out. Blacks are
    lifted a hair, like a print.
-4. **Film-stock LUT** (optional) — your `.cube` LUT supplies the color
+5. **Film-stock LUT** (optional) — your `.cube` LUT supplies the color
    character; filmify steps out of the way and skips its own split tone.
-5. **Color discipline** — mild desaturation, warm highlights, faintly cool
+6. **Color discipline** — mild desaturation, warm highlights, faintly cool
    shadows. Restrained on purpose; skin stays natural.
-6. **Halation** — bright areas glow softly red-orange instead of clipping,
+7. **Halation** — bright areas glow softly red-orange instead of clipping,
    the way light bounces inside a real film base.
-7. **Grain** — a real scanned grain plate if you have one (looped and
+8. **Grain** — a real scanned grain plate if you have one (looped and
    overlay-blended), otherwise synthesized temporal grain weighted to luma
    so it reads as silver grain, not sensor noise.
-8. **Vignette** — slight corner falloff, like a lens.
+9. **Vignette** — slight corner falloff, like a lens.
 
 Output is encoded with `x264 -tune grain` so the encoder doesn't smooth the
 texture back out.
