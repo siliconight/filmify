@@ -9,6 +9,33 @@ motion with a 180° shutter feel, gentle softness, restrained color, halation
 glow around bright lights, and organic grain. No NLE, no plugins, no
 subscription — just Python and FFmpeg.
 
+## Your first five minutes
+
+**Easiest start (no terminal needed):**
+- **Windows** — drag a clip (or a whole folder) onto `filmify-drop.bat`.
+- **Mac** — double-click `filmify-drop.command`, drag your clip into the
+  window, press Return. (First time: right-click → Open if macOS warns
+  about an unidentified developer.)
+
+Either way you get a fast split-screen preview — your footage on the left,
+the film look on the right — and a report opens in your browser.
+
+**Don't have Python?**
+- Windows: install from [python.org/downloads](https://www.python.org/downloads/)
+  and tick **"Add python.exe to PATH"** during install. (Heads-up: typing
+  `python` without it installed opens the Microsoft Store — use the
+  installer from python.org instead.)
+- Mac: `brew install python3`, or the python.org installer. The command is
+  `python3` on Mac, `python` on Windows.
+
+**From the terminal**, this is the command to try first:
+
+```sh
+python filmify.py yourclip.mp4 --compare --preview
+```
+
+Running `python filmify.py` with nothing else prints this quickstart.
+
 ## Requirements
 
 - Python 3.8+

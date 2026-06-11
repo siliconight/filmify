@@ -3,6 +3,27 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.8.0] — 2026-06-11
+
+First-time-user experience release: closing the gap between download and
+the first "wow".
+
+### Added
+- Drop launchers: `filmify-drop.bat` (Windows — drag clips or a folder onto
+  it) and `filmify-drop.command` (Mac — double-click, drag the clip into the
+  window). Both run a `--compare --preview` split-screen test and keep the
+  window open; both detect a missing Python and say exactly how to install
+  it. No terminal knowledge needed for the first taste.
+- Friendly no-args screen: `python filmify.py` alone prints a quickstart
+  (try-this-first command + three-step workflow) instead of an argparse
+  usage dump.
+- First-run tip: a full-quality render of a clip longer than 30 s without
+  `--preview` prints a one-line nudge toward `--compare --preview`.
+- README "Your first five minutes" section with per-OS Python install
+  notes, including the Windows Microsoft-Store-opens trap.
+- `.gitattributes` pinning CRLF for the .bat and LF for the .command so
+  line endings survive cloning on any OS.
+
 ## [0.7.0] — 2026-06-11
 
 ### Added

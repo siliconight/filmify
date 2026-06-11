@@ -56,7 +56,23 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
+
+QUICKSTART = f"""filmify {__version__} — make digital video look like physical film.
+
+Try this first (15-second split-screen test of the look):
+
+    python filmify.py yourclip.mp4 --compare --preview
+
+Then the full workflow:
+
+    1. Dial it in     --look subtle|standard|heavy, add --bw, --weave 1.5 ...
+    2. Save the look  --save-look myfilm.json
+    3. Run the shoot  python filmify.py shoot_folder/ --look-file myfilm.json --codec prores
+
+A report with before/after thumbnails opens in your browser after each run.
+Full options: python filmify.py --help
+"""
 
 # Settings persisted in a project look file (--save-look / --look-file)
 LOOK_KEYS = [
@@ -68,6 +84,7 @@ LOOK_KEYS = [
 # Resolved at startup by find_tool(); plain names work as a fallback.
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
+_TIP_SHOWN = False
 
 
 def find_tool(name: str):
@@ -423,6 +440,12 @@ def render(src: Path, out: Path, args) -> dict:
     print(f"input : {src}  ({info['width']}x{info['height']} @ {info['fps']:.3f} fps)")
     print(f"output: {out}")
     print(f"look  : {summarize_settings(args)}")
+    global _TIP_SHOWN
+    if (not _TIP_SHOWN and not args.preview and not args.dry_run
+            and info["duration"] > 30):
+        print("tip   : add --compare --preview to test the look in seconds "
+              "before a full render")
+        _TIP_SHOWN = True
 
     if args.dry_run:
         print("\n" + " ".join(f"'{c}'" if " " in c else c for c in cmd) + "\n")
@@ -504,6 +527,9 @@ p{{color:#cfc7ba;margin:.5rem 0 0}}</style></head><body>
 
 
 def main() -> None:
+    if len(sys.argv) == 1:
+        print(QUICKSTART)
+        return
     ap = argparse.ArgumentParser(
         description="Process digital video to look like physical film.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
