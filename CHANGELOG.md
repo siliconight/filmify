@@ -3,6 +3,27 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.5.1] — 2026-06-11
+
+Cross-platform hardening for Windows and macOS.
+
+### Fixed
+- Windows LUT paths: drive-letter colons (`C:\luts\film.cube`) were
+  double-escaped in the filtergraph and would fail to load. Now correctly
+  single-backslash escaped; verified against colon-bearing paths. Paths
+  containing a quote character are rejected with a clear error.
+- Console output no longer crashes on Windows legacy code pages (cp1252
+  etc.) when redirected to a file — non-encodable characters like `°`
+  degrade gracefully instead of raising UnicodeEncodeError.
+- `--version` reported 0.4.0 in the v0.5.0 release (version string was
+  never bumped). The git tag was correct; the string now matches.
+
+### Added
+- Tool discovery: ffmpeg/ffprobe are found on PATH first, then next to
+  filmify.py, then in the working directory — Windows users can just drop
+  `ffmpeg.exe` beside the script. The not-found error now includes install
+  commands for Windows (winget) and macOS (brew).
+
 ## [0.5.0] — 2026-06-11
 
 ### Added

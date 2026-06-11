@@ -12,9 +12,24 @@ subscription — just Python and FFmpeg.
 ## Requirements
 
 - Python 3.8+
-- [FFmpeg](https://ffmpeg.org) (`ffmpeg` and `ffprobe` on your PATH)
+- [FFmpeg](https://ffmpeg.org) (`ffmpeg` and `ffprobe`)
 
-Works on Windows, macOS, and Linux.
+Works on Windows, macOS, and Linux. Installing FFmpeg:
+
+```sh
+# Windows
+winget install ffmpeg
+# ...or just drop ffmpeg.exe and ffprobe.exe next to filmify.py
+
+# macOS
+brew install ffmpeg
+
+# Linux (Debian/Ubuntu)
+sudo apt install ffmpeg
+```
+
+filmify finds ffmpeg on your PATH, next to the script, or in the current
+folder — whichever comes first.
 
 ## Quick start
 

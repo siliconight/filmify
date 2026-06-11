@@ -46,12 +46,32 @@ protect highlights (or shoot log/flat), light intentionally, and shoot
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "0.4.0"
+__version__ = "0.5.1"
+
+# Resolved at startup by find_tool(); plain names work as a fallback.
+FFMPEG = "ffmpeg"
+FFPROBE = "ffprobe"
+
+
+def find_tool(name: str):
+    """Locate ffmpeg/ffprobe: PATH first, then beside this script, then the
+    working directory. Windows users often drop ffmpeg.exe next to the
+    script instead of editing PATH — support that."""
+    hit = shutil.which(name)
+    if hit:
+        return hit
+    exe = name + (".exe" if os.name == "nt" else "")
+    for d in (Path(__file__).resolve().parent, Path.cwd()):
+        cand = d / exe
+        if cand.is_file():
+            return str(cand)
+    return None
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm", ".mts", ".mxf"}
 
@@ -98,7 +118,7 @@ BW_MIX = (
 def probe(path: Path) -> dict:
     """Return basic stream info for the input file."""
     cmd = [
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        FFPROBE, "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=avg_frame_rate,width,height",
         "-of", "json", str(path),
     ]
@@ -114,10 +134,14 @@ def probe(path: Path) -> dict:
 def fpath(path: Path) -> str:
     """Escape a file path for use inside an ffmpeg filtergraph.
 
-    Filtergraph syntax treats ':' and '\\' specially, which breaks Windows
-    paths like C:\\luts\\film.cube. Forward slashes work fine on Windows.
+    Filtergraph syntax treats ':' specially, which breaks Windows drive
+    letters like C:\\luts\\film.cube. Forward slashes work fine on Windows,
+    and the colon needs a single backslash escape even inside quotes.
     """
-    s = str(path).replace("\\", "/").replace(":", "\\\\:")
+    s = str(path.resolve())
+    if "'" in s:
+        sys.exit(f"error: path contains a quote character, please rename: {s}")
+    s = s.replace("\\", "/").replace(":", "\\:")
     return f"'{s}'"
 
 
@@ -268,7 +292,7 @@ def render(src: Path, out: Path, args) -> None:
     info = probe(src)
     graph = build_filtergraph(args, info)
 
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning", "-stats",
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "warning", "-stats",
            "-i", str(src)]
     if args.grain_plate:
         cmd += ["-stream_loop", "-1", "-i", str(args.grain_plate)]
@@ -370,9 +394,24 @@ def main() -> None:
                     help="print the ffmpeg command without running it")
     args = ap.parse_args()
 
-    for tool in ("ffmpeg", "ffprobe"):
-        if shutil.which(tool) is None:
-            sys.exit(f"error: {tool} not found on PATH")
+    # Windows consoles/redirects can use legacy code pages that choke on
+    # characters like ° — degrade gracefully instead of crashing.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+    global FFMPEG, FFPROBE
+    FFMPEG = find_tool("ffmpeg")
+    FFPROBE = find_tool("ffprobe")
+    for name, hit in (("ffmpeg", FFMPEG), ("ffprobe", FFPROBE)):
+        if hit is None:
+            sys.exit(
+                f"error: {name} not found.\n"
+                f"  Windows: winget install ffmpeg   (or drop {name}.exe next to filmify.py)\n"
+                f"  macOS  : brew install ffmpeg"
+            )
     if not args.input.exists():
         sys.exit(f"error: {args.input} not found")
     for opt in ("lut", "grain_plate"):
