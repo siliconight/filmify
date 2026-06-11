@@ -13,20 +13,23 @@ The processing chain (in order — order matters):
                         lenses + the film plane itself are slightly soft.
   3. Gate weave         Optional slow frame drift, like film transport
                         through a projector gate.
-  4. Filmic tone curve  S-curve with a soft shoulder. Whites roll off and
-                        never reach 100% — highlights are protected, never
-                        clipped. Blacks are lifted a hair.
-  5. Film-stock LUT     Optional .cube 3D LUT (Kodak/Fuji print emulations,
+  4. B&W mode           Optional panchromatic-weighted mono conversion.
+  5. Filmic tone curve  Per-preset contrast CHARACTER: each preset puts its
+                        contrast in a different tonal region, the way stocks
+                        differ. All share the protected-highlight shoulder —
+                        whites roll off and never reach 100%.
+  6. Film-stock LUT     Optional .cube 3D LUT (Kodak/Fuji print emulations,
                         etc.). When a LUT is supplied it owns the color
                         character, so the built-in split tone is skipped.
-  6. Color discipline   Mild desaturation + a subtle warm-highlight /
-                        cool-shadow split tone (when no LUT is given).
-  7. Halation           Bright areas isolated, blurred wide, tinted
-                        red-orange, screened back over the image.
-  8. Grain              Real scanned grain plate (--grain-plate) overlaid
+  7. Color discipline   Mild desaturation, warm-highlight / cool-shadow
+                        split tone, and chroma softening — film's color
+                        layers resolve softer than its luminance.
+  8. Halation           Bright areas isolated, blurred wide, tinted
+                        red-orange (neutral in B&W), screened back over.
+  9. Grain              Real scanned grain plate (--grain-plate) overlaid
                         and looped, or synthesized temporal luma-weighted
-                        grain as the fallback.
-  9. Vignette           Very slight corner falloff, like a real lens.
+                        grain as the fallback. Heavier in B&W.
+ 10. Vignette           Very slight corner falloff, like a real lens.
 
 Usage:
   python filmify.py input.mp4
@@ -48,30 +51,48 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm", ".mts", ".mxf"}
 
 # ----------------------------------------------------------------------------
 # Look presets. Every value can be overridden from the CLI.
+#
+# `curve` gives each preset its own contrast CHARACTER, not just amount:
+# film stocks all add global contrast, but differ in *which tonal region*
+# the contrast lives in — those regional differences are the stock's
+# personality. All curves share the protected-highlight shoulder (<1.0)
+# and slight black lift.
 # ----------------------------------------------------------------------------
 LOOKS = {
+    # near-neutral mids, soft shoulder — modern digital-cinema finish
     "subtle": dict(
         soften=0.35, saturation=0.93, halation=0.22, halation_thresh=0.82,
-        grain=5, plate_opacity=0.30, vignette="PI/7", black_lift=0.010,
-        shoulder=0.965, warmth=0.04,
+        grain=5, plate_opacity=0.30, vignette="PI/7", warmth=0.04, chroma=0.8,
+        curve="0/0.01 0.22/0.2 0.5/0.51 0.8/0.825 0.93/0.925 1/0.965",
     ),
+    # contrast concentrated in the midtones — classic print-stock snap
     "standard": dict(
         soften=0.55, saturation=0.88, halation=0.33, halation_thresh=0.78,
-        grain=7, plate_opacity=0.42, vignette="PI/6", black_lift=0.015,
-        shoulder=0.955, warmth=0.06,
+        grain=7, plate_opacity=0.42, vignette="PI/6", warmth=0.06, chroma=1.2,
+        curve="0/0.015 0.15/0.12 0.35/0.33 0.5/0.52 0.72/0.78 0.92/0.915 1/0.955",
     ),
+    # lifted faded blacks, contrast in the lower-mids, compressed top — vintage
     "heavy": dict(
         soften=0.85, saturation=0.82, halation=0.48, halation_thresh=0.72,
-        grain=11, plate_opacity=0.55, vignette="PI/5", black_lift=0.025,
-        shoulder=0.945, warmth=0.09,
+        grain=11, plate_opacity=0.55, vignette="PI/5", warmth=0.09, chroma=1.8,
+        curve="0/0.03 0.12/0.115 0.3/0.3 0.55/0.62 0.8/0.85 1/0.945",
     ),
 }
+
+# Panchromatic-ish B&W channel weighting (red-favoring vs Rec.709 luma,
+# the way classic B&W stocks render skin slightly bright and skies darker)
+BW_MIX = (
+    "colorchannelmixer="
+    "rr=.35:rg=.45:rb=.20:"
+    "gr=.35:gg=.45:gb=.20:"
+    "br=.35:bg=.45:bb=.20"
+)
 
 
 def probe(path: Path) -> dict:
@@ -100,31 +121,14 @@ def fpath(path: Path) -> str:
     return f"'{s}'"
 
 
-def tone_curve(black_lift: float, shoulder: float) -> str:
-    """
-    Filmic S-curve as ffmpeg 'curves' points.
-    - black_lift raises pure black slightly (faded film base).
-    - shoulder is where pure white lands (<1.0 = highlights protected).
-    The midsection adds gentle contrast; the top rolls off smoothly so
-    bright areas compress instead of clipping.
-    """
-    pts = [
-        (0.00, black_lift),
-        (0.18, 0.155 + black_lift * 0.5),
-        (0.50, 0.515),
-        (0.78, 0.815),
-        (0.92, 0.915),
-        (1.00, shoulder),
-    ]
-    return " ".join(f"{x:g}/{y:g}" for x, y in pts)
-
-
 def build_filtergraph(args, info: dict) -> str:
     p = dict(LOOKS[args.look])  # copy preset, then apply CLI overrides
     for key in ("grain", "halation", "soften", "saturation", "plate_opacity"):
         v = getattr(args, key, None)
         if v is not None:
             p[key] = v
+    if args.chroma_soften is not None:
+        p["chroma"] = args.chroma_soften
 
     chain = []
     src_fps = info["fps"]
@@ -158,36 +162,48 @@ def build_filtergraph(args, info: dict) -> str:
         )
         chain.append(f"scale={w_px}:{h_px},setsar=1")
 
-    # -- 4. Filmic tone curve -------------------------------------------------
-    if not args.no_curve:
-        chain.append(f"curves=all='{tone_curve(p['black_lift'], p['shoulder'])}'")
+    # -- 4. B&W mode: panchromatic-weighted mono before the tone curve -------
+    if args.bw:
+        chain.append(BW_MIX)
 
-    # -- 5. Film-stock LUT ------------------------------------------------------
+    # -- 5. Filmic tone curve (per-preset contrast character) -----------------
+    if not args.no_curve:
+        chain.append(f"curves=all='{p['curve']}'")
+
+    # -- 6. Film-stock LUT ------------------------------------------------------
     if args.lut:
         chain.append(f"lut3d=file={fpath(args.lut)}")
 
-    # -- 6. Color discipline ----------------------------------------------------
-    if p["saturation"] != 1.0:
-        chain.append(f"eq=saturation={p['saturation']:.2f}")
-    if not args.lut:
-        # warm highlights, faintly cool shadows — a classic print-stock split.
-        # Skipped when a LUT is supplied: the LUT owns the color character.
-        w = p["warmth"]
-        chain.append(
-            f"colorbalance="
-            f"rh={w:.3f}:bh={-w * 0.5:.3f}:"
-            f"rs={-w * 0.3:.3f}:bs={w * 0.4:.3f}"
-        )
+    # -- 7. Color discipline ----------------------------------------------------
+    if not args.bw:
+        if p["saturation"] != 1.0:
+            chain.append(f"eq=saturation={p['saturation']:.2f}")
+        if not args.lut:
+            # warm highlights, faintly cool shadows — a classic print-stock
+            # split. Skipped when a LUT is supplied: the LUT owns the color.
+            w = p["warmth"]
+            chain.append(
+                f"colorbalance="
+                f"rh={w:.3f}:bh={-w * 0.5:.3f}:"
+                f"rs={-w * 0.3:.3f}:bs={w * 0.4:.3f}"
+            )
+        # Chroma softening: film's color layers resolve softer than its
+        # luminance. Blur ONLY the chroma planes — detail stays, the
+        # digital crispness of color edges goes.
+        if p["chroma"] > 0:
+            chain.append(f"format=yuv420p,gblur=sigma={p['chroma']:.2f}:planes=6")
 
     graph = ",".join(chain) if chain else "null"
 
-    # -- 7. Halation: split → isolate highlights → blur → tint → screen ------
+    # -- 8. Halation: split → isolate highlights → blur → tint → screen ------
     if p["halation"] > 0:
         t = p["halation_thresh"]
+        # B&W stock halos stay neutral; color stock halos go red-orange
+        tint = "" if args.bw else ",colorchannelmixer=rr=1.0:gg=0.46:bb=0.24"
         hal = (
             f"colorlevels=rimin={t}:gimin={t}:bimin={t},"
-            f"gblur=sigma=16,"
-            f"colorchannelmixer=rr=1.0:gg=0.46:bb=0.24"
+            f"gblur=sigma=16"
+            f"{tint}"
         )
         graph = (
             f"[0:v]{graph},split[base][hl];"
@@ -197,7 +213,7 @@ def build_filtergraph(args, info: dict) -> str:
     else:
         graph = f"[0:v]{graph}[pre]"
 
-    # -- 8. Grain ----------------------------------------------------------------
+    # -- 9. Grain ----------------------------------------------------------------
     if args.grain_plate:
         # Real scanned grain: loop it, scale to cover the frame, overlay-blend.
         graph += (
@@ -209,7 +225,8 @@ def build_filtergraph(args, info: dict) -> str:
     elif p["grain"] > 0:
         # Synthesized fallback: temporal, regenerated per frame, luma-weighted
         # so it reads as silver grain rather than RGB sensor noise.
-        g = int(p["grain"])
+        # B&W stocks wear their grain more openly — bump it.
+        g = int(p["grain"] * (1.5 if args.bw else 1.0))
         tail = [
             f"noise=c0s={g}:c0f=t+u:"
             f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u"
@@ -217,7 +234,7 @@ def build_filtergraph(args, info: dict) -> str:
     else:
         tail = []
 
-    # -- 9. Vignette ----------------------------------------------------------
+    # -- 10. Vignette ----------------------------------------------------------
     if not args.no_vignette:
         tail.append(f"vignette=angle={p['vignette']}")
 
@@ -251,6 +268,8 @@ def render(src: Path, out: Path, args) -> None:
     ]
 
     bits = [args.look]
+    if args.bw:
+        bits.append("B&W")
     if args.conform:
         bits.append("24fps/180° conform")
     if args.weave > 0:
@@ -308,6 +327,12 @@ def main() -> None:
                     help="softening strength override (0 disables)")
     ap.add_argument("--saturation", type=float, default=None, metavar="0-2",
                     help="saturation override (1 = unchanged)")
+    ap.add_argument("--bw", action="store_true",
+                    help="black & white film mode: panchromatic-weighted mono, "
+                         "neutral halation, heavier grain")
+    ap.add_argument("--chroma-soften", type=float, default=None, metavar="0-3",
+                    help="chroma-only blur strength override (0 disables); "
+                         "film color resolves softer than its luminance")
     ap.add_argument("--weave", type=float, default=0.0, metavar="PX",
                     help="gate weave: slow frame drift in pixels (try 1-2; 0 disables)")
     ap.add_argument("--no-curve", action="store_true",

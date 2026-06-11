@@ -3,6 +3,27 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.4.0] — 2026-06-11
+
+### Added
+- B&W film mode (`--bw`): panchromatic-weighted mono conversion (red-favoring
+  vs Rec.709 luma, so skin renders bright and skies darker), neutral halation
+  instead of red-orange, and 1.5× grain. A deliberate, forgiving finish for
+  productions without a colorist.
+- Chroma softening: film's color layers resolve softer than its luminance,
+  so the chroma planes (only) get a gentle blur. Per-preset strength,
+  override with `--chroma-soften` (0 disables). Kills the digital crispness
+  of color edges while leaving detail untouched.
+- Per-preset contrast character: each preset now has its own curve *shape*,
+  not just amount — `subtle` keeps near-neutral mids with a soft shoulder,
+  `standard` concentrates contrast in the midtones like a print stock,
+  `heavy` lifts/fades blacks with lower-mid contrast and a compressed top.
+  All keep the protected-highlight shoulder.
+
+### Changed
+- Preset definition: explicit `curve` point strings replace the shared
+  `black_lift`/`shoulder` parameters.
+
 ## [0.3.0] — 2026-06-11
 
 ### Added

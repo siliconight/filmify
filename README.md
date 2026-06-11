@@ -62,7 +62,8 @@ python filmify.py clip.mp4 --look heavy
 ```
 
 Every component can be overridden individually: `--grain`, `--halation`,
-`--soften`, `--saturation`, `--plate-opacity`, `--weave`, `--preview`, `--no-curve`,
+`--soften`, `--saturation`, `--plate-opacity`, `--chroma-soften`, `--weave`,
+`--bw`, `--preview`, `--no-curve`,
 `--no-vignette`. Use `--dry-run` to print the FFmpeg command it builds
 without running it.
 
@@ -97,9 +98,20 @@ It finishes the look — it can't recover what the camera threw away. The
 biggest wins still happen on set:
 
 - **Expose to protect highlights** (or shoot a log/flat profile and grade).
-- **Light intentionally** — lighting does more for the film look than any
-  processing.
+  Film forgives overexposure; digital does not. Once whites clip, no curve
+  brings them back.
+- **Light intentionally** — bad lighting reads as amateur faster than any
+  camera choice, and over-lighting is the classic tell. Contrasty, stylish
+  lighting usually means *fewer* fixtures: the sun, practicals already in
+  the location, a lamp in frame. Free.
 - **Shoot 24 fps with a 180° shutter in camera** when your rig allows it.
+- **Adapt vintage glass.** A cheap adapted lens from the '70s gives you
+  optical softness and character no filter or post process matches.
+- **Spend on sound.** Audiences forgive soft images; they do not forgive
+  bad audio. If you spend money anywhere, spend it there.
+- **Shoot fewer, more deliberate takes.** Film's look came partly from its
+  cost forcing intention. The discipline is free.
+- **No colorist? Go B&W** (`--bw`). It reads as deliberate, not unfinished.
 
 ## Versioning
 
