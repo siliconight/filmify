@@ -3,6 +3,27 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.15.0] — 2026-06-12
+
+### Added
+- Six new styles, now built on the print-stock engine: `blockbuster`
+  (neutral stock, Scope, 10-bit), `western` (warm stock, Scope, heavy),
+  `horror` (cool stock, desaturated), `wedding` (warm stock, soft),
+  `super8` (16mm, 4:3, leaks, weave, heavy grain), `newsreel` (B&W 16mm,
+  4:3, weave). Eleven styles total.
+- Visual preset gallery in the panel: the style dropdown is replaced by a
+  strip of clickable cards, each showing YOUR clip rendered with that style
+  (lazy-loaded 240px previews at the current scrub position). Click a card
+  to apply it; touching any slider deselects the card so it's clear you've
+  gone custom.
+- Processed-file proof, three ways: (1) every output now carries container
+  metadata — `comment: processed with filmify <version> | <settings>` —
+  readable in VLC, MediaInfo, or ffprobe, so a file identifies itself
+  forever; (2) the panel's render-done state shows a green confirmation
+  banner with the output name and swaps the preview to a frame decoded
+  from the finished file (not a simulation of it); (3) the existing
+  `_film` suffix and HTML report remain.
+
 ## [0.14.0] — 2026-06-12
 
 The prestige release: the three post-side gaps between filmify output and a

@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -67,6 +67,16 @@ STYLES = {
     "home-movie":  {"look": "heavy", "leak": 0.3, "weave": 2.0},
     "epic":        {"look": "subtle", "gauge": "70mm", "ratio": 2.2,
                     "depth": 10, "codec": "prores"},
+    "blockbuster": {"look": "standard", "print_stock": "neutral",
+                    "ratio": 2.39, "depth": 10},
+    "western":     {"look": "heavy", "print_stock": "warm", "ratio": 2.39},
+    "horror":      {"look": "heavy", "print_stock": "cool",
+                    "saturation": 0.78},
+    "wedding":     {"look": "subtle", "print_stock": "warm", "soften": 0.7},
+    "super8":      {"look": "heavy", "gauge": "16mm", "grain": 16,
+                    "weave": 2.5, "leak": 0.4, "ratio": 1.33},
+    "newsreel":    {"look": "heavy", "bw": True, "gauge": "16mm",
+                    "weave": 1.5, "ratio": 1.33},
 }
 
 
@@ -807,6 +817,9 @@ def render(src: Path, out: Path, args) -> dict:
         cmd += ["-c:v", "libx264",
                 "-preset", "fast" if args.preview else "slow",
                 "-crf", str(args.crf), "-tune", "grain", "-c:a", "copy"]
+    cmd += ["-metadata",
+            f"comment=processed with filmify {__version__} | "
+            f"{summarize_settings(args)}"]
     cmd += [str(out)]
 
     print(f"input : {src}  ({info['width']}x{info['height']} @ {info['fps']:.3f} fps)")
@@ -919,13 +932,17 @@ button.sec{background:var(--line);color:var(--tx)}
 #scrubrow input{flex:1}
 #status{color:var(--dim);font-size:13px;min-height:1.2em}
 hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+#cards{display:flex;gap:8px;overflow-x:auto;width:100%;max-width:960px;padding-bottom:4px}
+.scard{flex:0 0 150px;cursor:pointer;border:2px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.scard.sel{border-color:var(--acc)}
+.scard img{width:100%;height:84px;object-fit:cover;display:block;background:#000}
+.scard div{font-size:11px;text-align:center;padding:3px 2px;color:var(--dim);text-transform:capitalize}
+.scard.sel div{color:var(--acc)}
+#rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
 </style></head><body>
 <div id="side">
   <h1>filmify __VERSION__</h1>
   <div class="fn">__FILENAME__</div>
-
-  <label>Style preset</label>
-  <select id="style"><option value="">— custom —</option>__STYLE_OPTS__</select>
 
   <label>Look (intensity)</label>
   <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option></select>
@@ -988,7 +1005,9 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div id="status"></div>
 </div>
 <div id="main">
+  <div id="cards"></div>
   <img id="prev" alt="preview">
+  <div id="rendered" hidden>&#10003; <span id="rname"></span> — this is a frame from the finished file</div>
   <div id="scrubrow">0s <input type="range" id="scrub" min="0" max="100" value="40"> __DUR__s</div>
 </div>
 <script>
@@ -1038,19 +1057,54 @@ function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 180); }
 document.querySelectorAll("input,select").forEach(el => {
   el.addEventListener("input", schedule); el.addEventListener("change", schedule);
 });
-$("style").addEventListener("change", () => {
-  const s = styles[$("style").value]; if (!s) return;
-  // reset to defaults first, then apply the recipe
-  $("look").value="standard"; $("gauge").value="35mm"; $("ratio").value="";
-  $("bw").checked=false; $("depth10").checked=false;
-  $("leak").value=0; $("flare").value=0; $("weave").value=0; $("codec").value="h264";
-  for (const [k,v] of Object.entries(s)){
-    if (k==="depth") $("depth10").checked = v===10;
-    else if (k==="bw") $("bw").checked = v;
-    else if ($(k)) $(k).value = v;
-  }
+const DEFAULTS = {look:"standard",gauge:"35mm",ratio:"",grain:7,halation:0.33,
+  soften:0.55,saturation:0.88,chroma_soften:1.2,weave:0,leak:0,flare:0,
+  bw:false,depth:8,codec:"h264",print_stock:"",lut:"",grain_plate:"",input_log:""};
+function styleSettings(name){
+  const d = Object.assign({}, DEFAULTS, styles[name] || {});
+  return {look:d.look,gauge:d.gauge,ratio:d.ratio||"",grain:d.grain,
+    halation:d.halation,soften:d.soften,saturation:d.saturation,
+    chroma_soften:d.chroma_soften,weave:d.weave,leak:d.leak,flare:d.flare,
+    bw:d.bw,conform:false,no_vignette:false,no_curve:false,compare:false,
+    depth:d.depth,input_log:"",lut:"",grain_plate:"",
+    print_stock:d.print_stock||"",codec:d.codec,t:$("scrub").value,pw:240};
+}
+function applyStyle(name){
+  const sdef = styles[name]; if (!sdef) return;
+  setAll(Object.assign({}, DEFAULTS, sdef));
+  document.querySelectorAll(".scard").forEach(c =>
+    c.classList.toggle("sel", c.dataset.style === name));
   schedule();
-});
+}
+function buildCards(){
+  const wrap = $("cards");
+  wrap.innerHTML = "";
+  for (const name of Object.keys(styles)){
+    const c = document.createElement("div");
+    c.className = "scard"; c.dataset.style = name;
+    c.innerHTML = "<img alt=''><div>" + name + "</div>";
+    c.onclick = () => applyStyle(name);
+    wrap.appendChild(c);
+  }
+  loadCardThumbs();
+}
+async function loadCardThumbs(){
+  // sequential so the main preview keeps priority
+  for (const c of document.querySelectorAll(".scard")){
+    const q = new URLSearchParams(styleSettings(c.dataset.style)).toString();
+    const img = c.querySelector("img");
+    await new Promise(res => {
+      const i = new Image();
+      i.onload = () => { img.src = i.src; res(); };
+      i.onerror = res;
+      i.src = "/preview?" + q;
+    });
+  }
+}
+// any manual tweak deselects the highlighted card
+document.querySelectorAll("#side input, #side select").forEach(el =>
+  el.addEventListener("input", () =>
+    document.querySelectorAll(".scard.sel").forEach(c => c.classList.remove("sel"))));
 async function post(url, body){
   $("status").textContent = "working…";
   const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
@@ -1066,14 +1120,24 @@ $("saveBtn").onclick = async () => {
   $("status").textContent = r.ok ? "look saved: " + r.path : "save failed: " + r.error;
 };
 $("renderBtn").onclick = async () => {
+  $("rendered").hidden = true;
   await post("/render", settings());
   const poll = setInterval(async () => {
     const s = await (await fetch("/status")).json();
     if (s.rendering) { $("status").textContent = "rendering full clip…"; }
-    else { clearInterval(poll);
-      $("status").textContent = s.error ? "render failed: " + s.error : "done: " + s.done; }
+    else {
+      clearInterval(poll);
+      if (s.error) { $("status").textContent = "render failed: " + s.error; }
+      else {
+        $("status").textContent = "";
+        $("rname").textContent = s.done;
+        $("rendered").hidden = false;
+        $("prev").src = "/result_frame?_=" + Date.now();
+      }
+    }
   }, 1000);
 };
+buildCards();
 refresh();
 </script></body></html>"""
 
@@ -1171,7 +1235,7 @@ def run_ui(args) -> None:
         t = max(0.0, min(dur * 0.98, dur * float(q.get("t", 40)) / 100.0))
         # Proxy: scale FIRST, then run every filter at proxy resolution —
         # the difference between sluggish and plugin-instant on 4K footage.
-        pw = min(960, info["width"])
+        pw = min(max(120, int(float(q.get("pw", 960)))), 1280, info["width"])
         ph = max(2, int(info["height"] * pw / info["width"] / 2) * 2)
         pinfo = dict(info, width=pw, height=ph)
         graph = build_filtergraph(a, pinfo)
@@ -1225,6 +1289,23 @@ def run_ui(args) -> None:
                     self._send(200, "image/jpeg", preview_jpeg(q))
                 except Exception as exc:  # noqa: BLE001
                     self._send(500, "text/plain", str(exc).encode())
+            elif self.path.startswith("/result_frame"):
+                if state["done"]:
+                    try:
+                        p = Path(state["done"])
+                        d = probe(p)["duration"] or 1.0
+                        self._send(200, "image/jpeg",
+                                   subprocess.run(
+                                       [FFMPEG, "-v", "error",
+                                        "-ss", f"{d * 0.4:.2f}", "-i", str(p),
+                                        "-frames:v", "1", "-vf", "scale=960:-2",
+                                        "-f", "image2", "-c:v", "mjpeg",
+                                        "-q:v", "4", "pipe:1"],
+                                       capture_output=True).stdout or b"")
+                    except (RuntimeError, OSError) as exc:
+                        self._send(500, "text/plain", str(exc).encode())
+                else:
+                    self._send(404, "text/plain", b"no render yet")
             elif self.path == "/status":
                 self._send(200, "application/json",
                            _json.dumps(state).encode())

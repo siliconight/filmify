@@ -148,12 +148,27 @@ python filmify.py shoot_day1/ --match --print-stock neutral --depth 10 --codec p
 ## Styles: one word, whole recipe
 
 ```sh
+python filmify.py clip.mp4 --style blockbuster   # neutral print stock + Scope + 10-bit
+python filmify.py clip.mp4 --style western       # warm stock + Scope + heavy
+python filmify.py clip.mp4 --style horror        # cool stock, desaturated
+python filmify.py clip.mp4 --style wedding       # warm stock, soft
 python filmify.py clip.mp4 --style documentary   # heavy + 16mm grit
 python filmify.py clip.mp4 --style noir          # heavy + B&W
-python filmify.py clip.mp4 --style anamorphic    # Scope ratio + streak flare + 10-bit
+python filmify.py clip.mp4 --style newsreel      # B&W 16mm, 4:3, weave
+python filmify.py clip.mp4 --style super8        # 16mm, 4:3, leaks + weave
+python filmify.py clip.mp4 --style anamorphic    # Scope + streak flare + 10-bit
 python filmify.py clip.mp4 --style home-movie    # light leaks + gate weave
 python filmify.py clip.mp4 --style epic          # 70mm + 2.2:1 + 10-bit ProRes
 ```
+
+In the control panel (`--ui` or drag a clip onto the launcher), styles are
+a gallery: a strip of cards, each one showing *your clip* rendered with
+that style — click the one that looks right, then fine-tune.
+
+Every output file carries proof of processing in its metadata
+(`comment: processed with filmify <version> | <settings>`) — visible in
+VLC, MediaInfo, or `ffprobe` — alongside the `_film` filename suffix and
+the HTML report.
 
 A style is just a flag set — every individual flag still overrides it, and
 `--save-look` captures the expanded result.
