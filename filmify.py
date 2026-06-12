@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 LOG_PRESETS = ("slog3", "vlog", "cineon")
 
@@ -141,7 +141,7 @@ LOOK_KEYS = [
     "look", "bw", "conform", "weave", "grain", "halation", "soften",
     "saturation", "chroma_soften", "plate_opacity", "no_curve",
     "no_vignette", "crf", "codec", "lut", "grain_plate",
-    "input_log", "leak", "depth",
+    "input_log", "leak", "depth", "flare", "ratio", "gauge",
 ]
 
 # Resolved at startup by find_tool(); plain names work as a fallback.
@@ -285,16 +285,44 @@ def build_filtergraph(args, info: dict) -> str:
     if args.chroma_soften is not None:
         p["chroma"] = args.chroma_soften
 
+    # Film gauge character: 70mm's negative is ~3.5x the area of 35mm, so it
+    # reads finer-grained and cleaner; 16mm goes the other way.
+    if args.gauge == "16mm":
+        p["grain"] = max(1, round(p["grain"] * 1.8))
+        p["soften"] = min(1.5, p["soften"] + 0.25)
+        p["chroma"] = p["chroma"] + 0.4
+        p["plate_opacity"] = min(1.0, p["plate_opacity"] * 1.3)
+    elif args.gauge == "70mm":
+        p["grain"] = max(0, round(p["grain"] * 0.5))
+        p["soften"] = max(0.0, p["soften"] * 0.6)
+
     chain = []
-    pre = []   # temporal conform runs before the compare split, so both
-               # halves share cadence and the split compares only the look
+    pre = []   # ratio crop + temporal conform run before the compare split,
+               # so both halves share framing and cadence and the split
+               # compares only the look
     src_fps = info["fps"]
     w_px, h_px = info["width"], info["height"]
     out_fps = 24 if (args.conform and src_fps > 24.5) else (src_fps or 24)
 
+    # -- 0. Cinema aspect ratio: center-crop to the target ratio -------------
+    if args.ratio:
+        r = args.ratio
+        sr = w_px / h_px
+        if abs(r - sr) > 0.01:
+            if r > sr:   # wider target: crop height
+                cw, ch = w_px, int(w_px / r / 2) * 2
+            else:        # narrower target: crop width
+                cw, ch = int(h_px * r / 2) * 2, h_px
+            cw, ch = max(2, cw), max(2, ch)
+            pre.append(f"crop={cw}:{ch}")
+            w_px, h_px = cw, ch
+
     depth10 = args.depth == 10
-    # working format for the filter chain; final format for the encoder
+    # working format for the filter chain; final format for the encoder;
+    # RGB format for screen-blend stages (screen math on YUV chroma planes
+    # shifts neutral colors magenta — all screen blends must run in RGB)
     wfmt = "yuv444p10le" if depth10 else "yuv420p"
+    rgbfmt = "gbrp10le" if depth10 else "gbrp"
     if depth10:
         ofmt = "yuv422p10le" if args.codec in ("prores", "dnxhr") else "yuv420p10le"
     else:
@@ -379,6 +407,7 @@ def build_filtergraph(args, info: dict) -> str:
         # B&W stock halos stay neutral; color stock halos go red-orange
         tint = "" if args.bw else ",colorchannelmixer=rr=1.0:gg=0.46:bb=0.24"
         hal = (
+            f"format={rgbfmt},"
             f"colorlevels=rimin={t}:gimin={t}:bimin={t},"
             f"gblur=sigma=16"
             f"{tint}"
@@ -386,12 +415,33 @@ def build_filtergraph(args, info: dict) -> str:
         graph = (
             f"{prefix}{body},split[base][hl];"
             f"[hl]{hal}[hal];"
-            f"[base][hal]blend=all_mode=screen:all_opacity={p['halation']:.2f}[pre]"
+            f"[base]format={rgbfmt}[baseR];"
+            f"[baseR][hal]blend=all_mode=screen:all_opacity={p['halation']:.2f}[pre]"
         )
     else:
         graph = f"{prefix}{body}[pre]"
 
     cur = "[pre]"
+
+    # -- 10b. Anamorphic streak flare: bright lights grow a long horizontal
+    #         blue-tinted line — the signature anamorphic-lens artifact,
+    #         emulated here the way effect filters do for spherical glass.
+    #         Screen blend runs in RGB (YUV screen blending shifts neutral
+    #         chroma magenta — same lesson as the light leak).
+    if args.flare > 0:
+        streak = (
+            f"format={rgbfmt},"
+            f"colorlevels=rimin=0.85:gimin=0.85:bimin=0.85,"
+            f"gblur=sigma={max(20, int(w_px * 0.05))}:sigmaV=0.8,"
+            f"colorchannelmixer=rr=0.25:gg=0.55:bb=1.0"
+        )
+        graph += (
+            f";{cur}split[flb][fls];"
+            f"[fls]{streak}[flk];"
+            f"[flb]format={rgbfmt}[flbr];"
+            f"[flbr][flk]blend=all_mode=screen:all_opacity={args.flare:.2f}[flo]"
+        )
+        cur = "[flo]"
 
     # -- 11. Light leak: a slow radial warm glow from the frame edge that the
     #        gradients source cycles in and out of existence over time —
@@ -401,7 +451,6 @@ def build_filtergraph(args, info: dict) -> str:
         # Screen-blending must happen in RGB: applying the screen formula to
         # YUV chroma planes (0.5-centered) shifts neutral colors toward
         # magenta across the whole frame (found the hard way).
-        rgbfmt = "gbrp10le" if depth10 else "gbrp"
         leak = (
             f"gradients=s={w_px}x{h_px}:type=radial:n=6:"
             f"x0=0:y0={int(h_px * 0.25)}:x1={int(w_px * 0.55)}:y1={h_px}:"
@@ -489,6 +538,12 @@ def summarize_settings(args) -> str:
         bits.append(f"weave {args.weave:g}px")
     if args.leak > 0:
         bits.append(f"leak {args.leak:g}")
+    if args.flare > 0:
+        bits.append(f"flare {args.flare:g}")
+    if args.ratio:
+        bits.append(f"{args.ratio:g}:1")
+    if args.gauge != "35mm":
+        bits.append(args.gauge)
     if args.lut:
         bits.append(f"LUT: {args.lut.name}")
     if args.grain_plate:
@@ -723,6 +778,19 @@ def main() -> None:
                          "(Panasonic), 'cineon' (generic), or a path to your "
                          "camera maker's official log-to-709 3D .cube LUT "
                          "(use that for C-Log, Apple Log, D-Log, etc.)")
+    ap.add_argument("--flare", nargs="?", const=0.35, type=float, default=0.0,
+                    metavar="0-1",
+                    help="anamorphic streak flare: bright lights grow a "
+                         "horizontal blue-tinted line (off by default; "
+                         "bare flag = 0.35)")
+    ap.add_argument("--ratio", type=float, default=None, metavar="R",
+                    help="center-crop to a cinema aspect ratio: 2.39 (Scope), "
+                         "2.2 (70mm Todd-AO), 2.76 (Ultra Panavision), "
+                         "1.85 (flat widescreen)")
+    ap.add_argument("--gauge", choices=("16mm", "35mm", "70mm"), default="35mm",
+                    help="film gauge character: 16mm = chunky grain and "
+                         "softer, 35mm = standard, 70mm = fine grain and "
+                         "cleaner (the large-format epic look)")
     ap.add_argument("--leak", nargs="?", const=0.3, type=float, default=0.0,
                     metavar="0-1",
                     help="intermittent warm light leak from the frame edge "

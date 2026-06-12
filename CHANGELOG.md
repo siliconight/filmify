@@ -3,6 +3,34 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.11.0] — 2026-06-11
+
+The format-character release: emulating the gauge and the glass, not just
+the emulsion.
+
+### Added
+- Anamorphic streak flare (`--flare [0-1]`, off by default): bright lights
+  grow a long horizontal blue-tinted line — the signature anamorphic-lens
+  artifact, emulated the way effect filters do it for spherical glass.
+- Cinema aspect ratios (`--ratio`): center-crop to 2.39 (modern Scope),
+  2.2 (70mm Todd-AO), 2.76 (Ultra Panavision / Hateful Eight), 1.85 (flat
+  widescreen), or any custom ratio. Applied before the look and before the
+  compare split, so framing matches on both halves; even dimensions
+  guaranteed.
+- Film gauge presets (`--gauge 16mm|35mm|70mm`): 16mm = chunkier grain,
+  softer, heavier chroma bleed; 35mm = standard; 70mm = fine grain and
+  cleaner (large-format epic look — its negative is ~3.5x the area of 35mm).
+  Composes with `--look` and all overrides.
+
+### Fixed
+- **Halation chroma bug, present since v0.1.0**: the halation screen blend
+  ran in YUV, where screen math corrupts the 0.5-centered chroma planes —
+  crushing green and shifting dark scenes magenta. Invisible on bright
+  saturated footage, ugly on dark scenes. All screen blends (halation,
+  leak, flare) now run in RGB. Verified by pixel inspection: a dark
+  neutral scene now stays dark and neutral. If dark footage processed
+  with earlier versions looked oddly purple, re-render with this one.
+
 ## [0.10.0] — 2026-06-11
 
 ### Added

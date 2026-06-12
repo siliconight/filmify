@@ -2,9 +2,10 @@
 
 **The feel of film, without the film camera.**
 
-filmify is a lightweight, single-file tool for indie filmmakers. Point it at
-your digital footage and it applies the things that make film read as
-*cinema*: protected highlights that roll off instead of clipping, 24 fps
+filmify is a lightweight, single-file tool for indie filmmakers. It makes
+what you shot better — it doesn't replace your taste. You still pick the
+final stock LUT, and you still edit the film. filmify is the darkroom: it
+develops your footage with the things that make film read as *cinema*: protected highlights that roll off instead of clipping, 24 fps
 motion with a 180° shutter feel, gentle softness, restrained color, halation
 glow around bright lights, and organic grain. No NLE, no plugins, no
 subscription — just Python and FFmpeg.
@@ -125,6 +126,27 @@ and `--codec prores` to keep all that captured range through the pipeline:
 10-bit processing avoids banding in skies and soft light, and DNxHR
 automatically switches to its 10-bit HQX profile. An occasional vintage
 light leak is there when you want it: `--leak`.
+
+## Format character: the gauge and the glass
+
+```sh
+python filmify.py clip.mp4 --ratio 2.39 --flare        # anamorphic Scope vibes
+python filmify.py clip.mp4 --gauge 70mm --ratio 2.2    # large-format epic
+python filmify.py clip.mp4 --gauge 16mm                # gritty documentary
+```
+
+- `--ratio` center-crops to a cinema aspect: **2.39** (modern Scope),
+  **2.2** (70mm Todd-AO), **2.76** (Ultra Panavision), **1.85** (flat).
+- `--gauge` sets the stock's physical character: 16mm is chunky and soft,
+  70mm is fine-grained and clean — the negative is ~3.5x the area of 35mm,
+  which is why epics shot on it look the way they do.
+- `--flare` adds the anamorphic streak: bright lights grow a horizontal
+  blue-tinted line.
+
+What no post tool can fake: anamorphic oval bokeh and depth compression are
+created by cylindrical glass at capture. A cheap anamorphic phone/lens
+adapter gets you the real thing — and pairs beautifully with `--ratio 2.39
+--flare`.
 
 ## Workflows
 
