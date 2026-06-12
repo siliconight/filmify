@@ -3,6 +3,32 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.14.0] — 2026-06-12
+
+The prestige release: the three post-side gaps between filmify output and a
+prestige finishing pass.
+
+### Added
+- Print-stock color engine (`--print-stock neutral|warm|cool`): a generated
+  3D LUT from a subtractive density model — per-channel S-curves in
+  log-exposure space plus interlayer crosstalk, the cross-channel bend that
+  "graded through film" actually means. Mid-gray verified to stay mid
+  (0.45 → 0.52), shadows gain print contrast (0.18 → 0.14), highlights stay
+  protected (1.0 → 0.95), all channels monotonic. Replaces the built-in
+  curve and split tone when active; your `--lut` still overrides it. Also
+  selectable in the panel.
+- Grain v2: synthesized grain now has PHYSICAL SCALE — generated at
+  gauge-dependent reduced resolution and scaled up into soft clumps
+  (16mm visibly coarse, 70mm near-invisible fine at the same strength),
+  and weighted into the midtones through a luma mask the way negative
+  stock wears its grain; highlights stay cleaner than shadows. Grain
+  plates are unaffected.
+- Batch shot matching (`--match`): a measurement pass samples every clip's
+  average luma and chroma, computes the batch median, and applies a gentle,
+  clamped exposure/white-balance nudge per clip before the look — the
+  colorist's first hour, automated. Verified: a deliberately mismatched
+  batch went from a luma spread of 45.7 to 5.6.
+
 ## [0.13.0] — 2026-06-12
 
 The smoothness release.

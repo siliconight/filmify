@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -101,6 +101,76 @@ def _cineon_to_linear(x: float) -> float:
     cv = x * 1023.0
     blk = 10 ** ((95.0 - 685.0) / 300.0)
     return (10 ** ((cv - 685.0) / 300.0) - blk) / (1.0 - blk)
+
+
+# ---------------------------------------------------------------------------
+# Print stock: a subtractive color model. Real print film isn't an additive
+# curve — it's dye densities with toe/shoulder S-curves in log-exposure
+# space, plus interlayer crosstalk (channels contaminating each other
+# slightly). That cross-channel bend is the "graded through film" signature
+# prestige pipelines chase. We bake it into a generated 3D LUT.
+# ---------------------------------------------------------------------------
+PRINT_STOCKS = {
+    # S midpoints live in log-exposure space where mid-gray lands (~0.83),
+    # not at 0.5 — anchoring them there keeps mid-gray near mid output.
+    "neutral": dict(mids=(0.850, 0.850, 0.853), gain=(1.00, 1.00, 1.00)),
+    "warm":    dict(mids=(0.842, 0.850, 0.866), gain=(1.015, 1.00, 0.975)),
+    "cool":    dict(mids=(0.862, 0.850, 0.842), gain=(0.98, 1.00, 1.015)),
+}
+_XTALK = ((0.88, 0.08, 0.04),
+          (0.06, 0.88, 0.06),
+          (0.04, 0.10, 0.86))
+
+
+def _stock_transform(r, g, b, spec):
+    import math
+    # 1. display -> pseudo log exposure, normalized to [0,1]
+    def to_log(v):
+        return (math.log10(v * 0.9 + 0.01) + 2.0) / 1.959
+    n = [to_log(r), to_log(g), to_log(b)]
+    # 2. interlayer crosstalk in log-exposure space
+    m = [sum(_XTALK[i][j] * n[j] for j in range(3)) for i in range(3)]
+    # 3. per-channel density S-curve (toe + shoulder); midpoint offsets and
+    #    gains are the stock's character. Shoulder lands < 1.0: highlights
+    #    stay protected, and saturation compresses as channels converge.
+    out = []
+    k = 4.8
+    for i, ch in enumerate(m):
+        mid = spec["mids"][i]
+        lo = math.tanh(k * (0.0 - mid))
+        hi = math.tanh(k * (1.0 - mid))
+        y = (math.tanh(k * (ch - mid)) - lo) / (hi - lo)
+        y = 0.012 + y * (0.952 - 0.012)
+        out.append(min(1.0, max(0.0, y * spec["gain"][i])))
+    return out
+
+
+def make_stock_lut(name: str) -> Path:
+    """Generate the print-stock 3D .cube in the temp dir (cached per run)."""
+    import tempfile
+    spec = PRINT_STOCKS[name]
+    n = 33
+    lines = [f'TITLE "filmify print stock {name}"', f"LUT_3D_SIZE {n}"]
+    for bi in range(n):
+        for gi in range(n):
+            for ri in range(n):
+                r, g, b = (ri / (n - 1), gi / (n - 1), bi / (n - 1))
+                ro, go, bo = _stock_transform(r, g, b, spec)
+                lines.append(f"{ro:.6f} {go:.6f} {bo:.6f}")
+    f = tempfile.NamedTemporaryFile(
+        mode="w", suffix=f"_stock_{name}.cube", delete=False, encoding="utf-8")
+    f.write("\n".join(lines) + "\n")
+    f.close()
+    return Path(f.name)
+
+
+_STOCK_LUTS = {}
+
+
+def stock_lut(name: str) -> Path:
+    if name not in _STOCK_LUTS:
+        _STOCK_LUTS[name] = make_stock_lut(name)
+    return _STOCK_LUTS[name]
 
 
 _LOG_DECODE = {"slog3": _slog3_to_linear, "vlog": _vlog_to_linear,
@@ -164,7 +234,7 @@ LOOK_KEYS = [
     "look", "bw", "conform", "weave", "grain", "halation", "soften",
     "saturation", "chroma_soften", "plate_opacity", "no_curve",
     "no_vignette", "crf", "codec", "lut", "grain_plate",
-    "input_log", "leak", "depth", "flare", "ratio", "gauge",
+    "input_log", "leak", "depth", "flare", "ratio", "gauge", "print_stock",
 ]
 
 # Resolved at startup by find_tool(); plain names work as a fallback.
@@ -263,6 +333,33 @@ def has_filter(name: str) -> bool:
                              capture_output=True, text=True)
         _FILTER_LIST = out.stdout if out.returncode == 0 else ""
     return f" {name} " in _FILTER_LIST
+
+
+def measure_clip(path: Path):
+    """Average luma and chroma (Y/U/V means, 0-255) sampled at 1 fps —
+    the colorist's light meter for shot matching."""
+    cmd = [
+        FFPROBE, "-v", "error", "-f", "lavfi",
+        "-i", f"movie={fpath(path)},fps=1,signalstats",
+        "-show_entries",
+        "frame_tags=lavfi.signalstats.YAVG,lavfi.signalstats.UAVG,"
+        "lavfi.signalstats.VAVG",
+        "-of", "csv=p=0",
+    ]
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    ys, us, vs = [], [], []
+    for line in out.stdout.splitlines():
+        parts = [p for p in line.strip().split(",") if p]
+        if len(parts) >= 3:
+            try:
+                y, u, v = (float(parts[0]), float(parts[1]), float(parts[2]))
+                ys.append(y); us.append(u); vs.append(v)
+            except ValueError:
+                continue
+    if not ys:
+        return None
+    n = len(ys)
+    return (sum(ys) / n, sum(us) / n, sum(vs) / n)
 
 
 def fpath(path: Path) -> str:
@@ -395,6 +492,19 @@ def build_filtergraph(args, info: dict) -> str:
         kind, lpath = args._loglut
         chain.append(f"lut{kind}=file={fpath(lpath)}")
 
+    # -- 3.5 Shot match: gentle, clamped exposure/WB nudge toward the batch
+    #        median, computed in main's measurement pass. The colorist's
+    #        first hour: match the shots, then lay the look over them.
+    mt = getattr(args, "_match", None)
+    if mt:
+        br, rm, bm = mt
+        parts = []
+        if abs(br) > 0.004:
+            parts.append(f"eq=brightness={br:.4f}")
+        if abs(rm) > 0.004 or abs(bm) > 0.004:
+            parts.append(f"colorbalance=rm={rm:.4f}:bm={bm:.4f}")
+        chain.extend(parts)
+
     # -- 4. Softening: negative unsharp == controlled blur -------------------
     if p["soften"] > 0:
         chain.append(
@@ -416,19 +526,25 @@ def build_filtergraph(args, info: dict) -> str:
     if args.bw:
         chain.append(BW_MIX)
 
+    # Which color engine owns tone+color? user LUT > print stock > built-in
+    use_stock = bool(args.print_stock) and not args.lut
+
     # -- 7. Filmic tone curve (per-preset contrast character) -----------------
-    if not args.no_curve:
+    # The print stock's density curves supply the tone when active.
+    if not args.no_curve and not use_stock:
         chain.append(f"curves=all='{p['curve']}'")
 
-    # -- 8. Film-stock LUT ------------------------------------------------------
+    # -- 8. Film-stock LUT / print stock ----------------------------------------
     if args.lut:
         chain.append(f"lut3d=file={fpath(args.lut)}")
+    elif use_stock:
+        chain.append(f"lut3d=file={fpath(stock_lut(args.print_stock))}")
 
     # -- 9. Color discipline ----------------------------------------------------
     if not args.bw:
         if p["saturation"] != 1.0:
             chain.append(f"eq=saturation={p['saturation']:.2f}")
-        if not args.lut:
+        if not args.lut and not use_stock:
             # warm highlights, faintly cool shadows — a classic print-stock
             # split. Skipped when a LUT is supplied: the LUT owns the color.
             w = p["warmth"]
@@ -523,14 +639,28 @@ def build_filtergraph(args, info: dict) -> str:
         )
         cur = "[gr]"
     elif p["grain"] > 0:
-        # Synthesized: temporal, regenerated per frame, luma-weighted so it
-        # reads as silver grain. B&W stocks wear their grain more openly.
-        # (The noise filter processes at up to 16-bit, so this is safe in
-        # 10-bit mode too.)
+        # Synthesized grain v2: grain has PHYSICAL SCALE, not just strength.
+        # Per-pixel noise on 4K reads as digital fizz; real grain is sized
+        # relative to the frame and the gauge. So: generate noise on a
+        # mid-gray plate at reduced resolution (gauge sets the divisor),
+        # scale it up bilinearly into soft clumps, overlay-blend, then
+        # maskedmerge it through a midtone-weighted luma mask — negative
+        # stock wears its grain in the mids; highlights stay cleaner.
         g = int(p["grain"] * (1.5 if args.bw else 1.0))
+        gdiv = {"16mm": 2.6, "35mm": 1.6, "70mm": 1.0}[args.gauge]
+        gw = max(2, int(w_px / gdiv / 2) * 2)
+        gh = max(2, int(h_px / gdiv / 2) * 2)
+        upscale = "" if gdiv == 1.0 else f",scale={w_px}:{h_px}:flags=bilinear"
         graph += (
-            f";{cur}noise=c0s={g}:c0f=t+u:"
-            f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u[gn]"
+            f";color=c=0x808080:s={gw}x{gh}:r={out_fps:g},"
+            f"noise=c0s={g}:c0f=t+u:"
+            f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u"
+            f"{upscale},format={wfmt}[gnz];"
+            f"{cur}split=3[gb][gov][gmsk];"
+            f"[gov][gnz]blend=all_mode=overlay:shortest=1[govd];"
+            f"[gmsk]format=gray,"
+            f"curves=all='0/0.35 0.45/1 0.78/0.5 1/0.18',format={wfmt}[gm];"
+            f"[gb][govd][gm]maskedmerge[gn]"
         )
         cur = "[gn]"
 
@@ -594,6 +724,8 @@ def summarize_settings(args) -> str:
         bits.append(args.gauge)
     if args.lut:
         bits.append(f"LUT: {args.lut.name}")
+    elif getattr(args, "print_stock", None):
+        bits.append(f"stock: {args.print_stock}")
     if args.grain_plate:
         bits.append(f"grain plate: {args.grain_plate.name}")
     if args.preview:
@@ -833,7 +965,10 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <label>Develop log footage</label>
   <select id="input_log"><option value="">none (Rec.709 source)</option><option value="slog3">S-Log3 (Sony)</option><option value="vlog">V-Log (Panasonic)</option><option value="cineon">Cineon (generic)</option></select>
 
-  <label>Film-stock LUT (.cube path — your pick, optional)</label>
+  <label>Print stock (built-in color engine)</label>
+  <select id="print_stock"><option value="">built-in curve + split tone</option><option value="neutral">neutral</option><option value="warm">warm</option><option value="cool">cool</option></select>
+
+  <label>Film-stock LUT (.cube path — your pick, overrides stock)</label>
   <input type="text" id="lut" placeholder="leave empty for built-in color">
 
   <label>Grain plate (video path, optional)</label>
@@ -863,7 +998,7 @@ const styles = __STYLES_JSON__;
 const looks = __LOOKS_JSON__;
 function setAll(d){
   const map = {look:"look",gauge:"gauge",codec:"codec",input_log:"input_log",
-               lut:"lut",grain_plate:"grain_plate"};
+               lut:"lut",grain_plate:"grain_plate",print_stock:"print_stock"};
   for (const [k,id] of Object.entries(map))
     if (d[k] !== undefined && d[k] !== null && $(id)) $(id).value = d[k];
   $("ratio").value = d.ratio ? String(d.ratio) : "";
@@ -883,6 +1018,7 @@ function settings(){
     no_vignette: !$("vignette").checked, no_curve: !$("curve").checked,
     compare: $("compare").checked, depth: $("depth10").checked ? 10 : 8,
     input_log: $("input_log").value, lut: $("lut").value,
+    print_stock: $("print_stock").value,
     grain_plate: $("grain_plate").value, codec: $("codec").value,
     t: $("scrub").value
   };
@@ -969,6 +1105,8 @@ def _ui_args(base, q):
     a.lut = Path(q["lut"]) if q.get("lut") else None
     a.grain_plate = Path(q["grain_plate"]) if q.get("grain_plate") else None
     a.plate_opacity = None
+    a.print_stock = q.get("print_stock") or None
+    a._match = None
     return a
 
 
@@ -1158,6 +1296,11 @@ def main() -> None:
                     help="split-screen output: left half original, right half "
                          "graded, with a divider line — for dialing in a look "
                          "(pairs well with --preview)")
+    ap.add_argument("--print-stock", choices=sorted(PRINT_STOCKS), default=None,
+                    help="built-in subtractive print-film color engine "
+                         "(density curves + interlayer crosstalk); replaces "
+                         "the built-in curve and split tone; your --lut "
+                         "still overrides it")
     ap.add_argument("--lut", type=Path, default=None, metavar="FILE.cube",
                     help="apply a film-stock 3D LUT (.cube); disables built-in split tone")
     ap.add_argument("--grain-plate", type=Path, default=None, metavar="FILE",
@@ -1229,6 +1372,11 @@ def main() -> None:
                     help="internal processing bit depth; 10 reduces banding "
                          "in gradients and survives further grading better "
                          "(pairs with --codec prores or dnxhr)")
+    ap.add_argument("--match", action="store_true",
+                    help="batch shot matching: measure every clip, nudge each "
+                         "gently toward the batch median exposure and white "
+                         "balance before applying the look — mixed cameras "
+                         "come out at the same level, not just the same look")
     ap.add_argument("--no-tonemap", action="store_true",
                     help="don't auto tone-map HDR (HLG/PQ) sources to Rec.709")
     ap.add_argument("--force", action="store_true",
@@ -1318,6 +1466,27 @@ def main() -> None:
             sys.exit(f"error: {outdir} exists and is not a folder")
         outdir.mkdir(parents=True, exist_ok=True)
         print(f"batch : {len(files)} file(s) → {outdir}\n")
+        nudges = {}
+        if args.match and len(files) > 1:
+            print("match : measuring clips…")
+            stats = {}
+            for f in files:
+                m = measure_clip(f)
+                if m:
+                    stats[f] = m
+            if len(stats) > 1:
+                med = tuple(
+                    sorted(v[i] for v in stats.values())[len(stats) // 2]
+                    for i in range(3))
+                clamp = lambda x, c: max(-c, min(c, x))
+                for f, (y, u, v) in stats.items():
+                    br = clamp((med[0] - y) / 255.0 * 0.7, 0.10)
+                    bm = clamp((med[1] - u) / 255.0 * 1.1, 0.08)
+                    rm = clamp((med[2] - v) / 255.0 * 1.1, 0.08)
+                    nudges[f] = (br, rm, bm)
+                    print(f"match : {f.name}: exposure {br:+.3f}, "
+                          f"r {rm:+.3f}, b {bm:+.3f}")
+            print()
         skipped = 0
         for i, f in enumerate(files, 1):
             outp = outdir / (f.stem + suffix + ext)
@@ -1326,7 +1495,9 @@ def main() -> None:
                 skipped += 1
                 continue
             print(f"[{i}/{len(files)}]")
+            args._match = nudges.get(f)
             results.append(render(f, outp, args))
+        args._match = None
         if skipped:
             print(f"\nskipped {skipped} already-rendered clip(s) — use --force to redo\n")
         if not results:

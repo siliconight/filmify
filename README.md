@@ -127,6 +127,24 @@ and `--codec prores` to keep all that captured range through the pipeline:
 automatically switches to its 10-bit HQX profile. An occasional vintage
 light leak is there when you want it: `--leak`.
 
+## The prestige pass
+
+```sh
+python filmify.py shoot_day1/ --match --print-stock neutral --depth 10 --codec prores
+```
+
+- `--print-stock neutral|warm|cool` — a built-in subtractive print-film
+  color engine: density S-curves plus interlayer crosstalk, the
+  cross-channel behavior colorists chase by grading digital through print
+  emulations. It replaces filmify's built-in curve and split tone; your own
+  `--lut` still wins, per the house rule: the final stock is your pick.
+- Grain has physical scale: 16mm is visibly coarse, 70mm is near-invisible
+  fine texture at the same strength, and grain lives in the midtones the
+  way it does on negative — highlights stay clean.
+- `--match` measures every clip in a batch and gently nudges each toward
+  the batch median exposure and white balance before the look — so mixed
+  cameras come out at the same level, not just the same look.
+
 ## Styles: one word, whole recipe
 
 ```sh
