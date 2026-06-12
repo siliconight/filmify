@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -234,7 +234,8 @@ def probe(path: Path) -> dict:
     so batch runs can record the error and continue."""
     cmd = [
         FFPROBE, "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=avg_frame_rate,width,height:format=duration",
+        "-show_entries",
+        "stream=avg_frame_rate,width,height,color_transfer:format=duration",
         "-of", "json", str(path),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True)
@@ -246,8 +247,22 @@ def probe(path: Path) -> dict:
     num, den = info["avg_frame_rate"].split("/")
     fps = float(num) / float(den) if float(den) else 0.0
     dur = float(data.get("format", {}).get("duration", 0) or 0)
+    trc = info.get("color_transfer") or ""
     return {"fps": fps, "width": info["width"], "height": info["height"],
-            "duration": dur}
+            "duration": dur, "hdr": trc in ("smpte2084", "arib-std-b67")}
+
+
+_FILTER_LIST = None
+
+
+def has_filter(name: str) -> bool:
+    """Whether this ffmpeg build provides a filter (cached)."""
+    global _FILTER_LIST
+    if _FILTER_LIST is None:
+        out = subprocess.run([FFMPEG, "-hide_banner", "-filters"],
+                             capture_output=True, text=True)
+        _FILTER_LIST = out.stdout if out.returncode == 0 else ""
+    return f" {name} " in _FILTER_LIST
 
 
 def fpath(path: Path) -> str:
@@ -359,6 +374,16 @@ def build_filtergraph(args, info: dict) -> str:
         elif src_fps > 24.5:
             pre.append("fps=24")
         # already ~24 / 23.976: leave cadence alone
+
+    # -- 1.5 HDR development: phones default to HLG/PQ recording; fed to a
+    #        Rec.709 pipeline untouched it comes out washed and wrong, and
+    #        the user blames the tool. Tone-map to 709 first.
+    if info.get("hdr") and not args.no_tonemap and has_filter("zscale"):
+        chain.append(
+            "zscale=t=linear:npl=100,"
+            "tonemap=tonemap=hable:desat=0,"
+            "zscale=t=bt709:m=bt709:p=bt709"
+        )
 
     # -- 2. Working bit depth --------------------------------------------------
     chain.append(f"format={wfmt}")
@@ -615,9 +640,17 @@ def render(src: Path, out: Path, args) -> dict:
         print(f"input : {src}\nFAILED: {res['error']}\n")
         return res
     res["fps_in"] = info["fps"]
+    if info.get("hdr"):
+        if args.no_tonemap:
+            print("note  : HDR source — tone-mapping disabled (--no-tonemap)")
+        elif has_filter("zscale"):
+            print("note  : HDR source detected — tone-mapping to Rec.709")
+        else:
+            print("warn  : HDR source, but this ffmpeg lacks zscale — colors "
+                  "may look washed; install a full ffmpeg build")
 
     graph = build_filtergraph(args, info)
-    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "warning", "-stats",
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-stats",
            "-i", str(src)]
     if args.grain_plate:
         cmd += ["-stream_loop", "-1", "-i", str(args.grain_plate)]
@@ -810,7 +843,12 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <label>Codec for full render</label>
   <select id="codec"><option selected>h264</option><option>prores</option><option>dnxhr</option></select>
 
-  <button class="sec" id="saveBtn">Save look (myfilm.json)</button>
+  <label>Load a saved look</label>
+  <select id="loadlook"><option value="">— choose —</option>__LOOK_OPTS__</select>
+
+  <label>Save look as</label>
+  <input type="text" id="lookname" value="myfilm">
+  <button class="sec" id="saveBtn">Save look</button>
   <button id="renderBtn">Render full clip</button>
   <div id="status"></div>
 </div>
@@ -822,6 +860,19 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 const $ = id => document.getElementById(id);
 const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare"];
 const styles = __STYLES_JSON__;
+const looks = __LOOKS_JSON__;
+function setAll(d){
+  const map = {look:"look",gauge:"gauge",codec:"codec",input_log:"input_log",
+               lut:"lut",grain_plate:"grain_plate"};
+  for (const [k,id] of Object.entries(map))
+    if (d[k] !== undefined && d[k] !== null && $(id)) $(id).value = d[k];
+  $("ratio").value = d.ratio ? String(d.ratio) : "";
+  for (const sname of sliders)
+    if (d[sname] !== undefined && d[sname] !== null) $(sname).value = d[sname];
+  $("bw").checked = !!d.bw; $("conform").checked = !!d.conform;
+  $("vignette").checked = !d.no_vignette; $("curve").checked = !d.no_curve;
+  $("depth10").checked = d.depth === 10;
+}
 function settings(){
   return {
     look: $("look").value, gauge: $("gauge").value, ratio: $("ratio").value,
@@ -869,8 +920,13 @@ async function post(url, body){
   const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   return r.json();
 }
+$("loadlook").addEventListener("change", () => {
+  const d = looks[$("loadlook").value]; if (!d) return;
+  setAll(d); schedule();
+});
 $("saveBtn").onclick = async () => {
-  const r = await post("/save", settings());
+  const body = settings(); body.lookname = $("lookname").value;
+  const r = await post("/save", body);
   $("status").textContent = r.ok ? "look saved: " + r.path : "save failed: " + r.error;
 };
 $("renderBtn").onclick = async () => {
@@ -953,6 +1009,19 @@ def run_ui(args) -> None:
             .replace("__STYLE_OPTS__", "".join(
                 f'<option value="{s}">{s}</option>' for s in sorted(STYLES)))
             .replace("__STYLES_JSON__", json.dumps(STYLES)))
+    looks = {}
+    for j in sorted(src.parent.glob("*.json")):
+        try:
+            d = json.loads(j.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and "filmify_version" in d:
+                looks[j.name] = d
+        except (OSError, json.JSONDecodeError):
+            continue
+    page = (page
+            .replace("__LOOK_OPTS__", "".join(
+                f'<option value="{html.escape(n)}">{html.escape(n)}</option>'
+                for n in looks))
+            .replace("__LOOKS_JSON__", json.dumps(looks)))
 
     def preview_jpeg(q):
         a = _ui_args(args, q)
@@ -962,9 +1031,13 @@ def run_ui(args) -> None:
         if a.grain_plate and not a.grain_plate.exists():
             a.grain_plate = None
         t = max(0.0, min(dur * 0.98, dur * float(q.get("t", 40)) / 100.0))
-        graph = build_filtergraph(a, info)
-        graph = graph.replace("[vout]", ",scale=960:-2[vout]") \
-            if graph.endswith("[vout]") else graph
+        # Proxy: scale FIRST, then run every filter at proxy resolution —
+        # the difference between sluggish and plugin-instant on 4K footage.
+        pw = min(960, info["width"])
+        ph = max(2, int(info["height"] * pw / info["width"] / 2) * 2)
+        pinfo = dict(info, width=pw, height=ph)
+        graph = build_filtergraph(a, pinfo)
+        graph = graph.replace("[0:v]", f"[0:v]scale={pw}:{ph},", 1)
         cmd = [FFMPEG, "-v", "error", "-ss", f"{t:.2f}", "-i", str(src)]
         if a.grain_plate:
             cmd += ["-stream_loop", "-1", "-i", str(a.grain_plate)]
@@ -1027,7 +1100,10 @@ def run_ui(args) -> None:
             if self.path == "/save":
                 try:
                     a = _ui_args(args, q)
-                    a.save_look = src.parent / "myfilm.json"
+                    name = Path(str(q.get("lookname") or "myfilm")).name
+                    if not name.endswith(".json"):
+                        name += ".json"
+                    a.save_look = src.parent / name
                     save_look_file(a)
                     self._send(200, "application/json", _json.dumps(
                         {"ok": True, "path": str(a.save_look)}).encode())
@@ -1153,6 +1229,10 @@ def main() -> None:
                     help="internal processing bit depth; 10 reduces banding "
                          "in gradients and survives further grading better "
                          "(pairs with --codec prores or dnxhr)")
+    ap.add_argument("--no-tonemap", action="store_true",
+                    help="don't auto tone-map HDR (HLG/PQ) sources to Rec.709")
+    ap.add_argument("--force", action="store_true",
+                    help="re-render batch outputs that already exist")
     ap.add_argument("--no-report", action="store_true",
                     help="skip writing/opening the HTML processing report")
     ap.add_argument("--crf", type=int, default=17,
@@ -1238,9 +1318,20 @@ def main() -> None:
             sys.exit(f"error: {outdir} exists and is not a folder")
         outdir.mkdir(parents=True, exist_ok=True)
         print(f"batch : {len(files)} file(s) → {outdir}\n")
+        skipped = 0
         for i, f in enumerate(files, 1):
+            outp = outdir / (f.stem + suffix + ext)
+            if outp.exists() and not args.force:
+                print(f"[{i}/{len(files)}] skip (already rendered): {outp.name}")
+                skipped += 1
+                continue
             print(f"[{i}/{len(files)}]")
-            results.append(render(f, outdir / (f.stem + suffix + ext), args))
+            results.append(render(f, outp, args))
+        if skipped:
+            print(f"\nskipped {skipped} already-rendered clip(s) — use --force to redo\n")
+        if not results:
+            print("nothing to do.")
+            return
         report_dir = outdir
     else:
         out = args.output or args.input.with_name(args.input.stem + suffix + ext)

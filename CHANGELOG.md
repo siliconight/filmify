@@ -3,6 +3,36 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.13.0] — 2026-06-12
+
+The smoothness release.
+
+### Added
+- HDR auto-development: phones default to HLG/PQ recording, which a Rec.709
+  pipeline renders washed and wrong. filmify now detects HDR transfer
+  characteristics at probe time and tone-maps to Rec.709 automatically
+  (zscale + hable), with a plain note in the output. `--no-tonemap` opts
+  out; builds without zscale get a clear warning instead of silent bad
+  color. This was the most likely silent first-contact failure for
+  phone-footage users.
+- Incremental batch: outputs that already exist are skipped with a per-file
+  note and a summary line — re-running a shoot-day folder only renders new
+  clips. `--force` redoes everything.
+- Panel look management: a "Load a saved look" dropdown (scans the clip's
+  folder for filmify look files) and a save-as name field, closing the loop
+  between the panel and the project-asset system.
+
+### Changed
+- Drop launchers now open the control panel for a single clip (the panel
+  was previously unreachable without a terminal); a dropped folder still
+  runs the batch split-screen preview.
+- Panel previews scale to proxy resolution at the FRONT of the filter
+  chain, so every filter runs at proxy size: the full look stack on 4K
+  source now previews in about a second. Full renders are untouched.
+- ffmpeg console output reduced to errors + progress; the RGB blend stages
+  were producing harmless but noisy swscaler conversion warnings on every
+  render.
+
 ## [0.12.0] — 2026-06-12
 
 ### Added

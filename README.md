@@ -148,10 +148,19 @@ python filmify.py clip.mp4 --ui
 
 Opens a panel in your browser that works like an audio plugin: a slider for
 every parameter, style presets, an A/B split preview that updates as you
-drag, a scrub bar to check different moments, and Save Look / Render
-buttons. Runs entirely on your machine (localhost), zero dependencies.
-Dial in the look on one clip, save it, then batch the folder from the
-command line or the drop launcher.
+drag (proxy-resolution renders — about a second even on 4K source), a scrub
+bar, a load-a-saved-look dropdown, and Save Look / Render buttons. Runs
+entirely on your machine (localhost), zero dependencies.
+
+The drop launchers open this panel too: drag a single clip onto
+`filmify-drop.bat` / into `filmify-drop.command` and the panel appears —
+no terminal at any point. Drop a folder instead and you get the batch
+split-screen preview.
+
+Shooting on a phone? HDR (HLG/PQ) sources are detected and tone-mapped to
+Rec.709 automatically, so colors come out right instead of washed.
+Re-running a batch only renders clips that don't have output yet
+(`--force` redoes all).
 
 ## Format character: the gauge and the glass
 

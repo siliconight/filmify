@@ -25,13 +25,16 @@ if not %errorlevel%==0 (
   exit /b 1
 )
 
-:loop
-if "%~1"=="" goto end
-echo.
-%PY% "%SCRIPT%" "%~1" --compare --preview
-shift
-goto loop
-
-:end
+if exist "%~1\" (
+  rem Folder: batch a fast split-screen preview of every clip
+  %PY% "%SCRIPT%" "%~1" --compare --preview
+) else (
+  rem Single clip: open the control panel in the browser
+  echo.
+  echo   Opening the filmify panel in your browser.
+  echo   Keep this window open while you work; close it when done.
+  echo.
+  %PY% "%SCRIPT%" "%~1" --ui
+)
 echo.
 pause
