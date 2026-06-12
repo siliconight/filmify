@@ -3,6 +3,21 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.12.0] — 2026-06-12
+
+### Added
+- Style presets (`--style documentary|noir|anamorphic|home-movie|epic`):
+  named recipes that expand to full flag sets. Pure expansion — explicit
+  flags and look files still override, and `--save-look` captures the
+  resolved settings.
+- Control panel (`--ui`): a browser-based parameter panel in the spirit of
+  an audio plugin. Sliders for every parameter, style preset selector, an
+  A/B split frame preview that re-renders as you drag (debounced,
+  single-frame, seconds-fast), a scrub bar, log/LUT/grain-plate inputs, and
+  Save Look / Render Full buttons with status polling. Served from a
+  localhost-only stdlib HTTP server — no dependencies, no network exposure,
+  still one file.
+
 ## [0.11.0] — 2026-06-11
 
 The format-character release: emulating the gauge and the glass, not just

@@ -127,6 +127,32 @@ and `--codec prores` to keep all that captured range through the pipeline:
 automatically switches to its 10-bit HQX profile. An occasional vintage
 light leak is there when you want it: `--leak`.
 
+## Styles: one word, whole recipe
+
+```sh
+python filmify.py clip.mp4 --style documentary   # heavy + 16mm grit
+python filmify.py clip.mp4 --style noir          # heavy + B&W
+python filmify.py clip.mp4 --style anamorphic    # Scope ratio + streak flare + 10-bit
+python filmify.py clip.mp4 --style home-movie    # light leaks + gate weave
+python filmify.py clip.mp4 --style epic          # 70mm + 2.2:1 + 10-bit ProRes
+```
+
+A style is just a flag set — every individual flag still overrides it, and
+`--save-look` captures the expanded result.
+
+## The control panel
+
+```sh
+python filmify.py clip.mp4 --ui
+```
+
+Opens a panel in your browser that works like an audio plugin: a slider for
+every parameter, style presets, an A/B split preview that updates as you
+drag, a scrub bar to check different moments, and Save Look / Render
+buttons. Runs entirely on your machine (localhost), zero dependencies.
+Dial in the look on one clip, save it, then batch the folder from the
+command line or the drop launcher.
+
 ## Format character: the gauge and the glass
 
 ```sh

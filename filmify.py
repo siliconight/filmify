@@ -56,7 +56,26 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
+
+# Named recipes: one word that expands to a flag set. Everything remains
+# individually overridable — explicit CLI flags and look files win.
+STYLES = {
+    "documentary": {"look": "heavy", "gauge": "16mm"},
+    "noir":        {"look": "heavy", "bw": True},
+    "anamorphic":  {"look": "standard", "ratio": 2.39, "flare": 0.35, "depth": 10},
+    "home-movie":  {"look": "heavy", "leak": 0.3, "weave": 2.0},
+    "epic":        {"look": "subtle", "gauge": "70mm", "ratio": 2.2,
+                    "depth": 10, "codec": "prores"},
+}
+
+
+def apply_style(args, ap) -> None:
+    """Expand a named style. Only fills settings still at their parser
+    defaults, so explicit flags and look-file values keep precedence."""
+    for k, v in STYLES[args.style].items():
+        if getattr(args, k) == ap.get_default(k):
+            setattr(args, k, v)
 
 LOG_PRESETS = ("slog3", "vlog", "cineon")
 
@@ -131,6 +150,10 @@ Then the full workflow:
     1. Dial it in     --look subtle|standard|heavy, add --bw, --weave 1.5 ...
     2. Save the look  --save-look myfilm.json
     3. Run the shoot  python filmify.py shoot_folder/ --look-file myfilm.json --codec prores
+
+Prefer knobs? The control panel works like an audio plugin:
+
+    python filmify.py yourclip.mp4 --ui
 
 A report with before/after thumbnails opens in your browser after each run.
 Full options: python filmify.py --help
@@ -710,6 +733,329 @@ p{{color:#cfc7ba;margin:.5rem 0 0}}</style></head><body>
     dest.write_text(doc, encoding="utf-8")
 
 
+UI_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>filmify panel</title><style>
+:root{--bg:#141210;--panel:#1d1a17;--line:#2c2722;--tx:#e8e2d8;--dim:#a89f90;--acc:#d98a4a}
+body{background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,sans-serif;margin:0;display:flex;min-height:100vh}
+#side{width:300px;min-width:300px;background:var(--panel);border-right:1px solid var(--line);padding:16px;overflow-y:auto}
+#main{flex:1;display:flex;flex-direction:column;align-items:center;padding:18px;gap:10px}
+h1{font-size:15px;margin:0 0 2px;color:var(--acc)}
+.fn{color:var(--dim);font-size:12px;margin-bottom:12px;word-break:break-all}
+label{display:flex;justify-content:space-between;align-items:center;margin:9px 0 2px;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+label output{color:var(--tx);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--acc)}
+select,input[type=text]{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:inherit}
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:10px 0}
+.checks label{display:flex;justify-content:flex-start;gap:6px;text-transform:none;margin:0}
+button{background:var(--acc);color:#1a120a;border:0;border-radius:7px;padding:9px 12px;font:inherit;font-weight:600;cursor:pointer;width:100%;margin-top:8px}
+button.sec{background:var(--line);color:var(--tx)}
+#prev{max-width:100%;max-height:72vh;border-radius:8px;background:#000;min-height:200px}
+#scrubrow{width:100%;max-width:960px;display:flex;gap:10px;align-items:center;color:var(--dim);font-size:12px}
+#scrubrow input{flex:1}
+#status{color:var(--dim);font-size:13px;min-height:1.2em}
+hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+</style></head><body>
+<div id="side">
+  <h1>filmify __VERSION__</h1>
+  <div class="fn">__FILENAME__</div>
+
+  <label>Style preset</label>
+  <select id="style"><option value="">— custom —</option>__STYLE_OPTS__</select>
+
+  <label>Look (intensity)</label>
+  <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option></select>
+
+  <label>Gauge</label>
+  <select id="gauge"><option>16mm</option><option selected>35mm</option><option>70mm</option></select>
+
+  <label>Aspect ratio</label>
+  <select id="ratio"><option value="">source</option><option value="1.85">1.85 flat</option><option value="2.2">2.2 70mm</option><option value="2.39">2.39 Scope</option><option value="2.76">2.76 Ultra Panavision</option></select>
+
+  <label>Grain <output id="grainV"></output></label>
+  <input type="range" id="grain" min="0" max="20" step="1" value="7">
+  <label>Halation <output id="halationV"></output></label>
+  <input type="range" id="halation" min="0" max="1" step="0.01" value="0.33">
+  <label>Soften <output id="softenV"></output></label>
+  <input type="range" id="soften" min="0" max="1.5" step="0.05" value="0.55">
+  <label>Saturation <output id="saturationV"></output></label>
+  <input type="range" id="saturation" min="0" max="2" step="0.01" value="0.88">
+  <label>Chroma soften <output id="chroma_softenV"></output></label>
+  <input type="range" id="chroma_soften" min="0" max="3" step="0.1" value="1.2">
+  <label>Gate weave <output id="weaveV"></output></label>
+  <input type="range" id="weave" min="0" max="3" step="0.1" value="0">
+  <label>Light leak <output id="leakV"></output></label>
+  <input type="range" id="leak" min="0" max="1" step="0.01" value="0">
+  <label>Anamorphic flare <output id="flareV"></output></label>
+  <input type="range" id="flare" min="0" max="1" step="0.01" value="0">
+
+  <div class="checks">
+    <label><input type="checkbox" id="bw"> B&amp;W</label>
+    <label><input type="checkbox" id="conform"> 24fps/180&deg;</label>
+    <label><input type="checkbox" id="vignette" checked> Vignette</label>
+    <label><input type="checkbox" id="curve" checked> Film curve</label>
+    <label><input type="checkbox" id="compare" checked> A/B split</label>
+    <label><input type="checkbox" id="depth10"> 10-bit</label>
+  </div>
+
+  <label>Develop log footage</label>
+  <select id="input_log"><option value="">none (Rec.709 source)</option><option value="slog3">S-Log3 (Sony)</option><option value="vlog">V-Log (Panasonic)</option><option value="cineon">Cineon (generic)</option></select>
+
+  <label>Film-stock LUT (.cube path — your pick, optional)</label>
+  <input type="text" id="lut" placeholder="leave empty for built-in color">
+
+  <label>Grain plate (video path, optional)</label>
+  <input type="text" id="grain_plate" placeholder="leave empty for synthesized">
+
+  <hr>
+  <label>Codec for full render</label>
+  <select id="codec"><option selected>h264</option><option>prores</option><option>dnxhr</option></select>
+
+  <button class="sec" id="saveBtn">Save look (myfilm.json)</button>
+  <button id="renderBtn">Render full clip</button>
+  <div id="status"></div>
+</div>
+<div id="main">
+  <img id="prev" alt="preview">
+  <div id="scrubrow">0s <input type="range" id="scrub" min="0" max="100" value="40"> __DUR__s</div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare"];
+const styles = __STYLES_JSON__;
+function settings(){
+  return {
+    look: $("look").value, gauge: $("gauge").value, ratio: $("ratio").value,
+    grain: $("grain").value, halation: $("halation").value, soften: $("soften").value,
+    saturation: $("saturation").value, chroma_soften: $("chroma_soften").value,
+    weave: $("weave").value, leak: $("leak").value, flare: $("flare").value,
+    bw: $("bw").checked, conform: $("conform").checked,
+    no_vignette: !$("vignette").checked, no_curve: !$("curve").checked,
+    compare: $("compare").checked, depth: $("depth10").checked ? 10 : 8,
+    input_log: $("input_log").value, lut: $("lut").value,
+    grain_plate: $("grain_plate").value, codec: $("codec").value,
+    t: $("scrub").value
+  };
+}
+let timer = null, busy = false, queued = false;
+function refresh(){
+  sliders.forEach(s => $(s+"V").textContent = $(s).value);
+  if (busy) { queued = true; return; }
+  busy = true;
+  const q = new URLSearchParams(settings()).toString();
+  const img = new Image();
+  img.onload = () => { $("prev").src = img.src; busy = false; if (queued){queued=false; refresh();} };
+  img.onerror = () => { $("status").textContent = "preview failed — check paths"; busy = false; };
+  img.src = "/preview?" + q + "&_=" + Date.now();
+}
+function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 180); }
+document.querySelectorAll("input,select").forEach(el => {
+  el.addEventListener("input", schedule); el.addEventListener("change", schedule);
+});
+$("style").addEventListener("change", () => {
+  const s = styles[$("style").value]; if (!s) return;
+  // reset to defaults first, then apply the recipe
+  $("look").value="standard"; $("gauge").value="35mm"; $("ratio").value="";
+  $("bw").checked=false; $("depth10").checked=false;
+  $("leak").value=0; $("flare").value=0; $("weave").value=0; $("codec").value="h264";
+  for (const [k,v] of Object.entries(s)){
+    if (k==="depth") $("depth10").checked = v===10;
+    else if (k==="bw") $("bw").checked = v;
+    else if ($(k)) $(k).value = v;
+  }
+  schedule();
+});
+async function post(url, body){
+  $("status").textContent = "working…";
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  return r.json();
+}
+$("saveBtn").onclick = async () => {
+  const r = await post("/save", settings());
+  $("status").textContent = r.ok ? "look saved: " + r.path : "save failed: " + r.error;
+};
+$("renderBtn").onclick = async () => {
+  await post("/render", settings());
+  const poll = setInterval(async () => {
+    const s = await (await fetch("/status")).json();
+    if (s.rendering) { $("status").textContent = "rendering full clip…"; }
+    else { clearInterval(poll);
+      $("status").textContent = s.error ? "render failed: " + s.error : "done: " + s.done; }
+  }, 1000);
+};
+refresh();
+</script></body></html>"""
+
+
+def _ui_args(base, q):
+    """Build an args namespace for a preview/render request from the panel's
+    settings, on top of the launch-time args."""
+    a = argparse.Namespace(**vars(base))
+    fl = lambda k, d=0.0: float(q.get(k, d) or d)
+    a.look = q.get("look", "standard")
+    a.gauge = q.get("gauge", "35mm")
+    a.ratio = float(q["ratio"]) if q.get("ratio") else None
+    a.grain = int(float(q.get("grain", 7)))
+    a.halation = fl("halation", 0.33)
+    a.soften = fl("soften", 0.55)
+    a.saturation = fl("saturation", 0.88)
+    a.chroma_soften = fl("chroma_soften", 1.2)
+    a.weave = fl("weave")
+    a.leak = fl("leak")
+    a.flare = fl("flare")
+    a.bw = str(q.get("bw")) in ("true", "True", "1")
+    a.conform = str(q.get("conform")) in ("true", "True", "1")
+    a.no_vignette = str(q.get("no_vignette")) in ("true", "True", "1")
+    a.no_curve = str(q.get("no_curve")) in ("true", "True", "1")
+    a.compare = str(q.get("compare", "true")) in ("true", "True", "1")
+    a.depth = int(q.get("depth", 8))
+    a.codec = q.get("codec", "h264")
+    a.input_log = q.get("input_log") or None
+    a.lut = Path(q["lut"]) if q.get("lut") else None
+    a.grain_plate = Path(q["grain_plate"]) if q.get("grain_plate") else None
+    a.plate_opacity = None
+    return a
+
+
+_UI_LOG_LUTS = {}
+
+
+def _ui_loglut(a):
+    if not a.input_log:
+        a._loglut = None
+        return None
+    name = str(a.input_log).lower()
+    if name in LOG_PRESETS:
+        if name not in _UI_LOG_LUTS:
+            _UI_LOG_LUTS[name] = make_log_lut(name)
+        a._loglut = ("1d", _UI_LOG_LUTS[name])
+    else:
+        p = Path(a.input_log)
+        a._loglut = ("3d", p) if p.exists() else None
+    return None
+
+
+def run_ui(args) -> None:
+    """Serve the control panel on localhost and open it in the browser."""
+    import http.server
+    import json as _json
+    import threading
+    import urllib.parse
+
+    src = args.input
+    info = probe(src)
+    dur = info["duration"] or 10.0
+    state = {"rendering": False, "done": None, "error": None}
+
+    page = (UI_PAGE
+            .replace("__VERSION__", __version__)
+            .replace("__FILENAME__", html.escape(src.name))
+            .replace("__DUR__", f"{dur:.0f}")
+            .replace("__STYLE_OPTS__", "".join(
+                f'<option value="{s}">{s}</option>' for s in sorted(STYLES)))
+            .replace("__STYLES_JSON__", json.dumps(STYLES)))
+
+    def preview_jpeg(q):
+        a = _ui_args(args, q)
+        _ui_loglut(a)
+        if a.lut and not a.lut.exists():
+            a.lut = None
+        if a.grain_plate and not a.grain_plate.exists():
+            a.grain_plate = None
+        t = max(0.0, min(dur * 0.98, dur * float(q.get("t", 40)) / 100.0))
+        graph = build_filtergraph(a, info)
+        graph = graph.replace("[vout]", ",scale=960:-2[vout]") \
+            if graph.endswith("[vout]") else graph
+        cmd = [FFMPEG, "-v", "error", "-ss", f"{t:.2f}", "-i", str(src)]
+        if a.grain_plate:
+            cmd += ["-stream_loop", "-1", "-i", str(a.grain_plate)]
+        cmd += ["-filter_complex", graph, "-map", "[vout]", "-frames:v", "1",
+                "-f", "image2", "-c:v", "mjpeg", "-q:v", "4", "pipe:1"]
+        out = subprocess.run(cmd, capture_output=True)
+        if out.returncode != 0 or not out.stdout:
+            raise RuntimeError(out.stderr.decode("utf-8", "replace")[-400:])
+        return out.stdout
+
+    def do_render(q):
+        a = _ui_args(args, q)
+        _ui_loglut(a)
+        a.compare = False
+        a.preview = None
+        a.dry_run = False
+        ext2 = ".mp4" if a.codec == "h264" else ".mov"
+        out = src.with_name(src.stem + "_film" + ext2)
+        state.update(rendering=True, done=None, error=None)
+        try:
+            res = render(src, out, a)
+            if res["ok"]:
+                state.update(rendering=False, done=str(out))
+            else:
+                state.update(rendering=False, error=res["error"])
+        except Exception as exc:  # noqa: BLE001 — surface anything to the panel
+            state.update(rendering=False, error=str(exc))
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def _send(self, code, ctype, body):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/":
+                self._send(200, "text/html; charset=utf-8", page.encode())
+            elif self.path.startswith("/preview"):
+                q = dict(urllib.parse.parse_qsl(
+                    urllib.parse.urlsplit(self.path).query))
+                try:
+                    self._send(200, "image/jpeg", preview_jpeg(q))
+                except Exception as exc:  # noqa: BLE001
+                    self._send(500, "text/plain", str(exc).encode())
+            elif self.path == "/status":
+                self._send(200, "application/json",
+                           _json.dumps(state).encode())
+            else:
+                self._send(404, "text/plain", b"not found")
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            q = _json.loads(self.rfile.read(n) or b"{}")
+            q = {k: ("" if v is None else v) for k, v in q.items()}
+            if self.path == "/save":
+                try:
+                    a = _ui_args(args, q)
+                    a.save_look = src.parent / "myfilm.json"
+                    save_look_file(a)
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": True, "path": str(a.save_look)}).encode())
+                except Exception as exc:  # noqa: BLE001
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": False, "error": str(exc)}).encode())
+            elif self.path == "/render":
+                if not state["rendering"]:
+                    threading.Thread(target=do_render, args=(q,),
+                                     daemon=True).start()
+                self._send(200, "application/json", b'{"ok": true}')
+            else:
+                self._send(404, "text/plain", b"not found")
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/"
+    print(f"filmify panel: {url}")
+    print("(Ctrl+C here closes it)")
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\npanel closed.")
+
+
 def main() -> None:
     if len(sys.argv) == 1:
         print(QUICKSTART)
@@ -778,6 +1124,14 @@ def main() -> None:
                          "(Panasonic), 'cineon' (generic), or a path to your "
                          "camera maker's official log-to-709 3D .cube LUT "
                          "(use that for C-Log, Apple Log, D-Log, etc.)")
+    ap.add_argument("--style", choices=sorted(STYLES), default=None,
+                    help="named recipe that expands to a flag set "
+                         "(individual flags still override): " +
+                         ", ".join(sorted(STYLES)))
+    ap.add_argument("--ui", action="store_true",
+                    help="open the control panel in your browser: sliders "
+                         "for every parameter, instant frame preview with "
+                         "A/B split, save-look and render buttons")
     ap.add_argument("--flare", nargs="?", const=0.35, type=float, default=0.0,
                     metavar="0-1",
                     help="anamorphic streak flare: bright lights grow a "
@@ -834,8 +1188,17 @@ def main() -> None:
 
     if args.look_file:
         apply_look_file(args, ap)
+    if args.style:
+        apply_style(args, ap)
     if args.save_look:
         save_look_file(args)
+
+    if args.ui:
+        if args.input.is_dir():
+            sys.exit("error: --ui needs a single clip to preview "
+                     "(dial in the look on one, then batch the folder)")
+        run_ui(args)
+        return
 
     args._loglut = None
     _loglut_tmp = None
