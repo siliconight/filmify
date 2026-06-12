@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -938,6 +938,8 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 .scard img{width:100%;height:84px;object-fit:cover;display:block;background:#000}
 .scard div{font-size:11px;text-align:center;padding:3px 2px;color:var(--dim);text-transform:capitalize}
 .scard.sel div{color:var(--acc)}
+#guide{background:#241f19;border:1px solid #3a3128;color:#cdbfa8;border-radius:8px;padding:7px 12px;font-size:12.5px;max-width:960px;width:100%;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;gap:8px}
+#gx{cursor:pointer;color:#a89f90;padding:0 4px}
 #rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
 </style></head><body>
 <div id="side">
@@ -1005,6 +1007,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div id="status"></div>
 </div>
 <div id="main">
+  <div id="guide">&#9312; Click a style below that looks right &nbsp;&rarr;&nbsp; &#9313; fine-tune with the sliders &nbsp;&rarr;&nbsp; &#9314; Save look &nbsp;&rarr;&nbsp; &#9315; Render <span id="gx">&#10005;</span></div>
   <div id="cards"></div>
   <img id="prev" alt="preview">
   <div id="rendered" hidden>&#10003; <span id="rname"></span> — this is a frame from the finished file</div>
@@ -1136,6 +1139,13 @@ $("renderBtn").onclick = async () => {
       }
     }
   }, 1000);
+};
+try {
+  if (localStorage.getItem("filmify_guide_done")) $("guide").hidden = true;
+} catch(e) {}
+$("gx").onclick = () => {
+  $("guide").hidden = true;
+  try { localStorage.setItem("filmify_guide_done", "1"); } catch(e) {}
 };
 buildCards();
 refresh();

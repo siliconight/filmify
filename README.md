@@ -2,6 +2,8 @@
 
 **The feel of film, without the film camera.**
 
+> **[⬇ Download filmify](https://github.com/siliconight/filmify/archive/refs/heads/master.zip)** — unzip, then double-click **START-HERE-WINDOWS.bat** or **START-HERE-MAC.command**. A file picker appears; pick a clip and the control panel opens. That's the whole install.
+
 filmify is a lightweight, single-file tool for indie filmmakers. It makes
 what you shot better — it doesn't replace your taste. You still pick the
 final stock LUT, and you still edit the film. filmify is the darkroom: it
@@ -12,25 +14,23 @@ subscription — just Python and FFmpeg.
 
 ## Your first five minutes
 
-**Easiest start (no terminal needed):**
-- **Windows** — drag a clip (or a whole folder) onto `filmify-drop.bat`.
-- **Mac** — five steps, total:
-  1. On the GitHub page: green **Code** button → **Download ZIP**, then
-     double-click the ZIP to unpack it.
-  2. **Right-click** `filmify-drop.command` → **Open** → **Open**. (Plain
-     double-clicking gets blocked the first time — this is macOS being
-     cautious about downloaded scripts; after once, double-click works.)
-  3. If a macOS dialog offers to install command line developer tools,
-     click **Install** and run the file again when it finishes — that's
-     Apple's own installer giving you Python.
-  4. filmify offers to download FFmpeg (the free video engine) for your
-     Mac — Intel or Apple Silicon is detected automatically, the official
-     static build is saved next to the script, nothing installs
-     system-wide. Press Return to accept.
-  5. Drag your clip into the window, press Return. A split-screen preview
-     renders and a before/after report opens in your browser.
+**Easiest start (no terminal needed):** double-click the START-HERE file
+for your OS. A native file picker appears — pick a clip and the control
+panel opens; pick a folder (Cancel on the file picker first) and the whole
+shoot gets a batch split-screen preview.
 
-  Steps 2–4 happen once; after that it's just double-click, drag, Return.
+- **Windows** — double-click `START-HERE-WINDOWS.bat`. First run: if
+  FFmpeg is missing it offers to download the official Windows build from
+  gyan.dev (the build ffmpeg.org links to) next to the script — nothing
+  installs system-wide.
+- **Mac** — **right-click** `START-HERE-MAC.command` → **Open** → **Open**
+  the first time (macOS is cautious about downloaded scripts; afterwards a
+  plain double-click works). If macOS offers to install command line
+  developer tools, click **Install** — that's Apple's own installer giving
+  you Python. FFmpeg is offered the same way as on Windows (Intel and
+  Apple Silicon auto-detected).
+
+  Setup steps happen once; after that it's double-click → pick → done.
 
 Either way you get a fast split-screen preview — your footage on the left,
 the film look on the right — and a report opens in your browser.
@@ -185,8 +185,8 @@ drag (proxy-resolution renders — about a second even on 4K source), a scrub
 bar, a load-a-saved-look dropdown, and Save Look / Render buttons. Runs
 entirely on your machine (localhost), zero dependencies.
 
-The drop launchers open this panel too: drag a single clip onto
-`filmify-drop.bat` / into `filmify-drop.command` and the panel appears —
+The drop launchers open this panel too: drop a clip onto or double-click
+`START-HERE-WINDOWS.bat` / `START-HERE-MAC.command` and the panel appears —
 no terminal at any point. Drop a folder instead and you get the batch
 split-screen preview.
 

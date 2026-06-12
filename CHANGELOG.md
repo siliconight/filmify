@@ -3,6 +3,34 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.16.0] — 2026-06-12
+
+FTUE round two: double-click → pick → done, on both platforms.
+
+### Added
+- Native file pickers: double-clicking either launcher with nothing
+  dragged now opens the OS's own file dialog (osascript `choose file` on
+  Mac, OpenFileDialog via PowerShell on Windows; Cancel offers a folder
+  picker for batching). Drag-and-drop — and the Mac drag-into-Terminal
+  trick — are no longer required skills.
+- Windows FFmpeg bootstrap, matching the Mac one from v0.10: missing
+  FFmpeg triggers a consent prompt, then a PowerShell download of the
+  official gyan.dev release-essentials build (the Windows build linked
+  from ffmpeg.org), extracted next to the script, execution-verified.
+- Launchers renamed to `START-HERE-WINDOWS.bat` and
+  `START-HERE-MAC.command` — the folder listing is now the instructions.
+- First-open guide strip in the panel (① style → ② sliders → ③ save →
+  ④ render), dismissible and remembered.
+- A bold download link at the top of the README pointing at the
+  latest-archive zip, so non-developers never have to find GitHub's
+  Code button.
+
+### Fixed
+- The Mac launcher never actually received the v0.13 "open the panel"
+  routing — a partial edit failure shipped undetected, so from v0.13 to
+  v0.15 it still ran the one-shot preview while the changelog claimed
+  otherwise. It now routes file → panel, folder → batch, as documented.
+
 ## [0.15.0] — 2026-06-12
 
 ### Added
