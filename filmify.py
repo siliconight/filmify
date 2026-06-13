@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.17.0"
+__version__ = "0.20.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -257,6 +257,16 @@ FFPROBE = "ffprobe"
 _TIP_SHOWN = False
 
 
+def run(cmd, **kw):
+    """subprocess.run, but never flashes a console window on Windows. Every
+    ffmpeg/ffprobe/osascript/powershell call goes through here — without the
+    flag, each one pops a visible cmd window, which on slider drags means a
+    storm of windows opening and closing."""
+    if os.name == "nt":
+        kw.setdefault("creationflags", 0x08000000)  # CREATE_NO_WINDOW
+    return subprocess.run(cmd, **kw)
+
+
 def find_tool(name: str):
     """Locate ffmpeg/ffprobe: PATH first, then beside this script, then the
     working directory. Windows users often drop ffmpeg.exe next to the
@@ -325,7 +335,7 @@ def probe(path: Path) -> dict:
         "stream=avg_frame_rate,width,height,color_transfer:format=duration",
         "-of", "json", str(path),
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    out = run(cmd, capture_output=True, text=True)
     data = json.loads(out.stdout) if out.returncode == 0 else {}
     if out.returncode != 0 or not data.get("streams"):
         detail = out.stderr.strip().splitlines()[-1] if out.stderr.strip() else "no video stream"
@@ -346,7 +356,7 @@ def has_filter(name: str) -> bool:
     """Whether this ffmpeg build provides a filter (cached)."""
     global _FILTER_LIST
     if _FILTER_LIST is None:
-        out = subprocess.run([FFMPEG, "-hide_banner", "-filters"],
+        out = run([FFMPEG, "-hide_banner", "-filters"],
                              capture_output=True, text=True)
         _FILTER_LIST = out.stdout if out.returncode == 0 else ""
     return f" {name} " in _FILTER_LIST
@@ -363,7 +373,7 @@ def measure_clip(path: Path):
         "lavfi.signalstats.VAVG",
         "-of", "csv=p=0",
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    out = run(cmd, capture_output=True, text=True)
     ys, us, vs = [], [], []
     for line in out.stdout.splitlines():
         parts = [p for p in line.strip().split(",") if p]
@@ -834,7 +844,7 @@ def summarize_settings(args) -> str:
 def grab_thumb(path: Path, seconds: float) -> str:
     """Return a frame as a base64 JPEG data URI ('' on failure), so the
     report is a single self-contained file."""
-    out = subprocess.run(
+    out = run(
         [FFMPEG, "-v", "error", "-ss", f"{max(0.0, seconds):.2f}",
          "-i", str(path), "-frames:v", "1", "-vf", "scale=480:-2",
          "-f", "image2", "-c:v", "mjpeg", "-q:v", "4", "pipe:1"],
@@ -921,7 +931,7 @@ def render(src: Path, out: Path, args) -> dict:
         res["ok"] = True
         return res
 
-    rc = subprocess.run(cmd).returncode
+    rc = run(cmd).returncode
     if rc != 0:
         res["error"] = f"ffmpeg exited with code {rc} (see console output above)"
         print(f"FAILED: {res['error']}\n")
@@ -1365,7 +1375,7 @@ def run_ui(args) -> None:
         Runs on the machine hosting the panel (the user's own machine)."""
         try:
             if sys.platform == "darwin":
-                out = subprocess.run(
+                out = run(
                     ["osascript", "-e",
                      'POSIX path of (choose file with prompt '
                      '"filmify — choose a video clip" of type '
@@ -1377,7 +1387,7 @@ def run_ui(args) -> None:
                       '$f=New-Object System.Windows.Forms.OpenFileDialog;'
                       "$f.Filter='Video|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm;*.mts|All|*.*';"
                       "if($f.ShowDialog() -eq 'OK'){$f.FileName}")
-                out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                out = run(["powershell", "-NoProfile", "-Command", ps],
                                      capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
         except (subprocess.TimeoutExpired, OSError):
@@ -1437,7 +1447,7 @@ def run_ui(args) -> None:
             cmd += ["-stream_loop", "-1", "-i", str(a.grain_plate)]
         cmd += ["-filter_complex", graph, "-map", "[vout]", "-frames:v", "1",
                 "-f", "image2", "-c:v", "mjpeg", "-q:v", "4", "pipe:1"]
-        out = subprocess.run(cmd, capture_output=True)
+        out = run(cmd, capture_output=True)
         if out.returncode != 0 or not out.stdout:
             raise RuntimeError(out.stderr.decode("utf-8", "replace")[-400:])
         return out.stdout
@@ -1491,7 +1501,7 @@ def run_ui(args) -> None:
                         p = Path(state["done"])
                         d = probe(p)["duration"] or 1.0
                         self._send(200, "image/jpeg",
-                                   subprocess.run(
+                                   run(
                                        [FFMPEG, "-v", "error",
                                         "-ss", f"{d * 0.4:.2f}", "-i", str(p),
                                         "-frames:v", "1", "-vf", "scale=960:-2",

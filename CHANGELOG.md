@@ -3,6 +3,19 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.20.1] — 2026-06-13
+
+### Fixed
+- **Console-window storm on Windows:** every ffmpeg/ffprobe call spawned a
+  visible cmd window, so dragging a slider in the panel flashed a window per
+  preview frame. All subprocess calls now route through a wrapper that sets
+  CREATE_NO_WINDOW on Windows — no flashing, on slider drags or anywhere
+  else.
+- **Version string was stuck at 0.17.0:** the v0.18–0.20 bumps silently
+  missed (each edit targeted a string the previous miss had left stale), so
+  `--version` and the processed-file metadata under-reported. Corrected, and
+  the cause noted so it doesn't recur.
+
 ## [0.20.0] — 2026-06-13
 
 Windows parity: a real app icon and a clean, console-free launch.
