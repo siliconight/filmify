@@ -1,3 +1,5 @@
+<p align="center"><img src="filmify_icon_1024.png" width="160" alt="filmify"></p>
+
 # filmify
 
 **The feel of film, without the film camera.**
@@ -31,6 +33,11 @@ shoot gets a batch split-screen preview.
   normal Mac dialogs the first time you open it. *(That one right-click is
   unavoidable for any free unsigned app; building the app locally is what
   lets every launch after it be a clean double-click.)*
+
+  When the app finishes building it offers to move itself into your
+  **Applications** folder — say yes and filmify lives with your other apps
+  (Launchpad, Spotlight, Dock), opening with a normal double-click. The app
+  remembers where its files are, so it keeps working from Applications.
 
   Prefer not to build an app? `START-HERE-MAC.command` still works the same
   way — right-click → Open the first time.

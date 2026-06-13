@@ -3,6 +3,23 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.18.2] — 2026-06-12
+
+### Added
+- After building filmify.app, the Mac builder offers to move it into
+  /Applications (native dialog) so it lives with the user's other apps —
+  Launchpad, Spotlight, Dock — as close to an installer as is possible
+  without a paid Apple Developer account. The app's repo path is now baked
+  in at build time, so it keeps working after the move.
+- Logo at the top of the README, and documented the build-and-install flow.
+
+### Note
+- A true double-click `.dmg`/`.pkg` installer requires Apple notarization
+  (a paid Developer account); without it, downloaded installers hit
+  Gatekeeper's strictest block. The locally-built app deliberately
+  sidesteps that — it's never quarantined — and the move-to-Applications
+  step gives the installed-app feel for free.
+
 ## [0.18.1] — 2026-06-12
 
 ### Added

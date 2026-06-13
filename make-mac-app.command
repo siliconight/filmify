@@ -14,16 +14,16 @@ APP="$HERE/filmify.app"
 echo
 echo "  Building filmify.app in this folder…"
 
-# The app's job: find this folder, then hand off to the silent launcher.
-# It lives wherever it's built, so it resolves its own path at run time.
+# The app's job: remember where filmify lives (this folder) and hand off to
+# the silent launcher. The repo path is baked in at build time, so the app
+# keeps working even after you move it to /Applications.
 read -r -d '' SRC <<APPLESCRIPT
 on run
-	set hereAlias to (path to me)
-	tell application "Finder" to set hereFolder to (container of hereAlias) as alias
-	set herePosix to POSIX path of hereFolder
-	do shell script "cd " & quoted form of herePosix & " && /bin/bash ./filmify-launch.sh > /dev/null 2>&1 &"
+	set repoDir to "HERE_PLACEHOLDER"
+	do shell script "cd " & quoted form of repoDir & " && /bin/bash ./filmify-launch.sh > /dev/null 2>&1 &"
 end run
 APPLESCRIPT
+SRC="${SRC/HERE_PLACEHOLDER/$HERE}"
 
 rm -rf "$APP"
 if ! osacompile -o "$APP" -e "$SRC" 2>/dev/null; then
@@ -58,7 +58,20 @@ fi
 
 echo
 echo "  Done. There is now a 'filmify' app in this folder."
-echo "  Double-click it any time — drag it to your Dock if you like."
+
+# Offer to place it in Applications so it behaves like any installed app.
+osascript <<INSTALL >/dev/null 2>&1
+try
+	display dialog "filmify.app is built. Move it to your Applications folder so it shows up with your other apps?" buttons {"Keep it here", "Move to Applications"} default button 2 with title "filmify" with icon note
+	if button returned of result is "Move to Applications" then
+		do shell script "ditto " & quoted form of "$APP" & " /Applications/filmify.app && rm -rf " & quoted form of "$APP"
+		display dialog "filmify is now in your Applications folder. Open it from Launchpad or Applications any time — drag it to your Dock if you like." buttons {"Great"} default button 1 with title "filmify" with icon note
+		tell application "Finder" to reveal (POSIX file "/Applications/filmify.app")
+	end if
+end try
+INSTALL
+
+echo "  Double-click filmify any time — drag it to your Dock if you like."
 echo "  (Terminal is no longer needed.)"
 echo
 read -n 1 -s -r -p "  Press any key to close."
