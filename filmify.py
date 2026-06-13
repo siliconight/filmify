@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -64,7 +64,8 @@ STYLES = {
     "documentary": {"look": "heavy", "gauge": "16mm"},
     "noir":        {"look": "heavy", "bw": True},
     "anamorphic":  {"look": "standard", "ratio": 2.39, "flare": 0.35, "depth": 10},
-    "home-movie":  {"look": "heavy", "leak": 0.3, "weave": 2.0},
+    "home-movie":  {"look": "heavy", "leak": 0.3, "weave": 2.0,
+                    "flicker": 0.3, "corner_soften": 0.7},
     "epic":        {"look": "subtle", "gauge": "70mm", "ratio": 2.2,
                     "depth": 10, "codec": "prores"},
     "blockbuster": {"look": "standard", "print_stock": "neutral",
@@ -74,9 +75,11 @@ STYLES = {
                     "saturation": 0.78},
     "wedding":     {"look": "subtle", "print_stock": "warm", "soften": 0.7},
     "super8":      {"look": "heavy", "gauge": "16mm", "grain": 16,
-                    "weave": 2.5, "leak": 0.4, "ratio": 1.33},
+                    "weave": 2.5, "leak": 0.4, "ratio": 1.33,
+                    "flicker": 0.5, "age": 0.45, "corner_soften": 1.0},
     "newsreel":    {"look": "heavy", "bw": True, "gauge": "16mm",
-                    "weave": 1.5, "ratio": 1.33},
+                    "weave": 1.5, "ratio": 1.33,
+                    "flicker": 0.5, "age": 0.55},
 }
 
 
@@ -245,6 +248,7 @@ LOOK_KEYS = [
     "saturation", "chroma_soften", "plate_opacity", "no_curve",
     "no_vignette", "crf", "codec", "lut", "grain_plate",
     "input_log", "leak", "depth", "flare", "ratio", "gauge", "print_stock",
+    "presence", "flicker", "corner_soften", "age", "no_protect_skin",
 ]
 
 # Resolved at startup by find_tool(); plain names work as a fallback.
@@ -283,18 +287,21 @@ LOOKS = {
     "subtle": dict(
         soften=0.35, saturation=0.93, halation=0.22, halation_thresh=0.82,
         grain=5, plate_opacity=0.30, vignette="PI/7", warmth=0.04, chroma=0.8,
+        presence=0.22,
         curve="0/0.01 0.22/0.2 0.5/0.51 0.8/0.825 0.93/0.925 1/0.965",
     ),
     # contrast concentrated in the midtones — classic print-stock snap
     "standard": dict(
         soften=0.55, saturation=0.88, halation=0.33, halation_thresh=0.78,
         grain=7, plate_opacity=0.42, vignette="PI/6", warmth=0.06, chroma=1.2,
+        presence=0.30,
         curve="0/0.015 0.15/0.12 0.35/0.33 0.5/0.52 0.72/0.78 0.92/0.915 1/0.955",
     ),
     # lifted faded blacks, contrast in the lower-mids, compressed top — vintage
     "heavy": dict(
         soften=0.85, saturation=0.82, halation=0.48, halation_thresh=0.72,
         grain=11, plate_opacity=0.55, vignette="PI/5", warmth=0.09, chroma=1.8,
+        presence=0.34,
         curve="0/0.03 0.12/0.115 0.3/0.3 0.55/0.62 0.8/0.85 1/0.945",
     ),
 }
@@ -521,6 +528,20 @@ def build_filtergraph(args, info: dict) -> str:
             f"unsharp=luma_msize_x=7:luma_msize_y=7:luma_amount=-{p['soften']:.2f}"
         )
 
+    # -- 4.5 Mid-frequency presence: the anti-"flat gray veneer". Film's MTF
+    #        rolls off fine detail (our softening) but keeps LOCAL contrast —
+    #        texture pop without edge sharpness. Large-radius, low-amount
+    #        unsharp is the classic remedy for digital flatness.
+    pres = args.presence if args.presence is not None else p.get("presence", 0.3)
+    if pres > 0:
+        # Large-radius local contrast via unsharp at a safe matrix size (the
+        # filter caps at 25 and its internal sum overflows near it — 13 is
+        # the practical ceiling). Low amount, wide radius = midtone "pop"
+        # without the edge-sharpening that screams digital.
+        chain.append(
+            f"unsharp=luma_msize_x=13:luma_msize_y=13:luma_amount={pres:.2f}"
+        )
+
     # -- 5. Gate weave: slow frame drift, two layered sines per axis ---------
     if args.weave > 0:
         a = args.weave
@@ -544,6 +565,15 @@ def build_filtergraph(args, info: dict) -> str:
     if not args.no_curve and not use_stock:
         chain.append(f"curves=all='{p['curve']}'")
 
+    # -- 7.5 Density flicker: film exposure breathes slightly frame to frame;
+    #        rock-steady luminance is a digital tell. Layered incommensurate
+    #        sines read as irregular variation, not a strobe.
+    if args.flicker > 0:
+        a = args.flicker * 0.16
+        chain.append(
+            f"hue=b='{a:.3f}*(0.6*sin(t*7.3)+0.4*sin(t*13.7)+0.3*sin(t*2.9))'"
+        )
+
     # -- 8. Film-stock LUT / print stock ----------------------------------------
     if args.lut:
         chain.append(f"lut3d=file={fpath(args.lut)}")
@@ -553,7 +583,18 @@ def build_filtergraph(args, info: dict) -> str:
     # -- 9. Color discipline ----------------------------------------------------
     if not args.bw:
         if p["saturation"] != 1.0:
-            chain.append(f"eq=saturation={p['saturation']:.2f}")
+            if args.no_protect_skin:
+                chain.append(f"eq=saturation={p['saturation']:.2f}")
+            else:
+                # Skin-protected desaturation: faces are where audiences
+                # look, and global desat pulls skin lifeless along with
+                # everything else. Pull non-skin hues the full amount and
+                # the red-yellow (skin) range only ~35% of it.
+                d = 1.0 - p["saturation"]   # how much we're reducing
+                chain.append(
+                    f"huesaturation=saturation={-d:.3f}:colors=g+c+b+m,"
+                    f"huesaturation=saturation={-d * 0.35:.3f}:colors=r+y"
+                )
         if not args.lut and not use_stock:
             # warm highlights, faintly cool shadows — a classic print-stock
             # split. Skipped when a LUT is supplied: the LUT owns the color.
@@ -596,6 +637,22 @@ def build_filtergraph(args, info: dict) -> str:
         graph = f"{prefix}{body}[pre]"
 
     cur = "[pre]"
+
+    # -- 10a. Corner softness (field curvature): sharp center, softer
+    #         corners — vintage glass's answer to the everything-in-focus
+    #         complaint. Blurred copy merged through an inverted-vignette
+    #         radial mask. Before grain: grain lives on the film plane and
+    #         stays sharp to the edges.
+    if args.corner_soften > 0:
+        graph += (
+            f";{cur}split[cs_a][cs_b];"
+            f"[cs_b]gblur=sigma={args.corner_soften:.2f}[cs_blur];"
+            f"color=c=white:s={w_px}x{h_px}:r={out_fps:g},"
+            f"vignette=angle=PI/3.4,negate,format={wfmt},gblur=sigma=24[cs_m];"
+            f"[cs_a]format={wfmt}[cs_a2];[cs_blur]format={wfmt}[cs_blur2];"
+            f"[cs_a2][cs_blur2][cs_m]maskedmerge=planes=7[csf]"
+        )
+        cur = "[csf]"
 
     # -- 10b. Anamorphic streak flare: bright lights grow a long horizontal
     #         blue-tinted line — the signature anamorphic-lens artifact,
@@ -674,6 +731,34 @@ def build_filtergraph(args, info: dict) -> str:
         )
         cur = "[gn]"
 
+    # -- 12.5 Print damage: white dust specks (heavily thresholded temporal
+    #         noise, scaled up into speck-sized blobs) plus a thin vertical
+    #         scratch that wanders and only exists for a moment every few
+    #         seconds. Screen-blended in RGB, strictly opt-in.
+    if args.age > 0:
+        ag = args.age
+        dw = max(2, int(w_px / 3 / 2) * 2)
+        dh = max(2, int(h_px / 3 / 2) * 2)
+        graph += (
+            # dust layer
+            f";color=c=0x161616:s={dw}x{dh}:r={out_fps:g},"
+            f"noise=c0s=82:c0f=t+u,"
+            f"colorlevels=rimin=0.62:gimin=0.62:bimin=0.62,"
+            f"scale={w_px}:{h_px}:flags=bilinear,gblur=sigma=0.6,"
+            f"format={rgbfmt}[dust];"
+            # scratch layer: static line on a wider canvas, crop position
+            # drifts; visibility gated to a brief window every ~9 s
+            f"color=c=black:s={w_px + 240}x{h_px}:r={out_fps:g},"
+            f"drawbox=x={(w_px + 240) // 2}:y=0:w=2:h={h_px}:color=0x9A9A9A:t=fill,"
+            f"crop={w_px}:{h_px}:x='120+85*sin(t*0.67)+45*sin(t*1.93)':y=0,"
+            f"hue=b='if(lt(mod(t,9.2),1.3),0,-12)',"
+            f"format={rgbfmt}[scr];"
+            f"[dust][scr]blend=all_mode=screen:shortest=1[dmg];"
+            f"{cur}format={rgbfmt}[agebase];"
+            f"[agebase][dmg]blend=all_mode=screen:all_opacity={ag:.2f}:shortest=1[aged]"
+        )
+        cur = "[aged]"
+
     # -- 13. Vignette ------------------------------------------------------------
     if not args.no_vignette:
         if depth10:
@@ -726,6 +811,12 @@ def summarize_settings(args) -> str:
         bits.append(f"weave {args.weave:g}px")
     if args.leak > 0:
         bits.append(f"leak {args.leak:g}")
+    if args.flicker > 0:
+        bits.append(f"flicker {args.flicker:g}")
+    if args.age > 0:
+        bits.append(f"aged {args.age:g}")
+    if args.corner_soften > 0:
+        bits.append(f"corners {args.corner_soften:g}")
     if args.flare > 0:
         bits.append(f"flare {args.flare:g}")
     if args.ratio:
@@ -971,6 +1062,14 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <input type="range" id="leak" min="0" max="1" step="0.01" value="0">
   <label>Anamorphic flare <output id="flareV"></output></label>
   <input type="range" id="flare" min="0" max="1" step="0.01" value="0">
+  <label>Presence (anti-flat) <output id="presenceV"></output></label>
+  <input type="range" id="presence" min="0" max="1" step="0.02" value="0.3">
+  <label>Density flicker <output id="flickerV"></output></label>
+  <input type="range" id="flicker" min="0" max="1" step="0.01" value="0">
+  <label>Corner softness <output id="corner_softenV"></output></label>
+  <input type="range" id="corner_soften" min="0" max="3" step="0.1" value="0">
+  <label>Aged print <output id="ageV"></output></label>
+  <input type="range" id="age" min="0" max="1" step="0.01" value="0">
 
   <div class="checks">
     <label><input type="checkbox" id="bw"> B&amp;W</label>
@@ -1015,7 +1114,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 </div>
 <script>
 const $ = id => document.getElementById(id);
-const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare"];
+const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare","presence","flicker","corner_soften","age"];
 const styles = __STYLES_JSON__;
 const looks = __LOOKS_JSON__;
 function setAll(d){
@@ -1036,6 +1135,8 @@ function settings(){
     grain: $("grain").value, halation: $("halation").value, soften: $("soften").value,
     saturation: $("saturation").value, chroma_soften: $("chroma_soften").value,
     weave: $("weave").value, leak: $("leak").value, flare: $("flare").value,
+    presence: $("presence").value, flicker: $("flicker").value,
+    corner_soften: $("corner_soften").value, age: $("age").value,
     bw: $("bw").checked, conform: $("conform").checked,
     no_vignette: !$("vignette").checked, no_curve: !$("curve").checked,
     compare: $("compare").checked, depth: $("depth10").checked ? 10 : 8,
@@ -1062,12 +1163,15 @@ document.querySelectorAll("input,select").forEach(el => {
 });
 const DEFAULTS = {look:"standard",gauge:"35mm",ratio:"",grain:7,halation:0.33,
   soften:0.55,saturation:0.88,chroma_soften:1.2,weave:0,leak:0,flare:0,
+  presence:0.3,flicker:0,corner_soften:0,age:0,
   bw:false,depth:8,codec:"h264",print_stock:"",lut:"",grain_plate:"",input_log:""};
 function styleSettings(name){
   const d = Object.assign({}, DEFAULTS, styles[name] || {});
   return {look:d.look,gauge:d.gauge,ratio:d.ratio||"",grain:d.grain,
     halation:d.halation,soften:d.soften,saturation:d.saturation,
     chroma_soften:d.chroma_soften,weave:d.weave,leak:d.leak,flare:d.flare,
+    presence:d.presence,flicker:d.flicker,corner_soften:d.corner_soften,
+    age:d.age,
     bw:d.bw,conform:false,no_vignette:false,no_curve:false,compare:false,
     depth:d.depth,input_log:"",lut:"",grain_plate:"",
     print_stock:d.print_stock||"",codec:d.codec,t:$("scrub").value,pw:240};
@@ -1180,6 +1284,11 @@ def _ui_args(base, q):
     a.grain_plate = Path(q["grain_plate"]) if q.get("grain_plate") else None
     a.plate_opacity = None
     a.print_stock = q.get("print_stock") or None
+    a.presence = float(q["presence"]) if q.get("presence") not in (None, "") else None
+    a.flicker = fl("flicker")
+    a.corner_soften = fl("corner_soften")
+    a.age = fl("age")
+    a.no_protect_skin = str(q.get("no_protect_skin")) in ("true", "True", "1")
     a._match = None
     return a
 
@@ -1455,6 +1564,22 @@ def main() -> None:
                     help="film gauge character: 16mm = chunky grain and "
                          "softer, 35mm = standard, 70mm = fine grain and "
                          "cleaner (the large-format epic look)")
+    ap.add_argument("--presence", type=float, default=None, metavar="0-1",
+                    help="mid-frequency local contrast (anti-flatness) "
+                         "override; 0 disables")
+    ap.add_argument("--flicker", nargs="?", const=0.5, type=float, default=0.0,
+                    metavar="0-1",
+                    help="film density flicker: subtle irregular exposure "
+                         "variance (off by default; bare flag = 0.5)")
+    ap.add_argument("--corner-soften", type=float, default=0.0, metavar="0-3",
+                    help="field curvature: sharp center, progressively "
+                         "softer corners, like vintage glass (0 disables)")
+    ap.add_argument("--age", nargs="?", const=0.4, type=float, default=0.0,
+                    metavar="0-1",
+                    help="print damage: dust specks plus an occasional "
+                         "wandering scratch line (off by default)")
+    ap.add_argument("--no-protect-skin", action="store_true",
+                    help="disable skin-tone protection during desaturation")
     ap.add_argument("--leak", nargs="?", const=0.3, type=float, default=0.0,
                     metavar="0-1",
                     help="intermittent warm light leak from the frame edge "

@@ -3,6 +3,35 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.17.0] — 2026-06-12
+
+Forum-sourced authenticity pass — the film qualities cinematographers cite
+that filmify wasn't doing.
+
+### Added
+- Skin-tone protection (on by default): desaturation now pulls non-skin
+  hues the full amount and the red-yellow range only ~35%, so faces stay
+  alive while the frame calms down. Fulfills the original "focus on skin
+  tones" goal. Verified: a skin swatch holds saturation at 132 vs 91
+  unprotected. `--no-protect-skin` for the old global behavior.
+- Mid-frequency presence (`--presence`, on by default per look): wide-radius
+  low-amount local contrast — the texture "pop" that counters digital's
+  flat-gray-veneer complaint, without edge sharpening.
+- Density flicker (`--flicker`): subtle irregular frame-to-frame exposure
+  variance from layered incommensurate sines (not a strobe). Folded into
+  home-movie, super8, newsreel.
+- Corner softness (`--corner-soften`): field curvature — sharp center,
+  softer corners, like vintage glass; the post-feasible cousin of the
+  "everything's in focus" complaint. Applied before grain so grain stays
+  edge-to-edge sharp.
+- Aged print (`--age`): procedural dust specks plus an occasional wandering
+  vertical scratch that only appears for a moment every few seconds.
+  Strictly opt-in; built into super8 and newsreel.
+
+### Fixed
+- `--presence` initially used an unsharp matrix (23) past the filter's safe
+  ceiling, which errored out; capped at 13.
+
 ## [0.16.0] — 2026-06-12
 
 FTUE round two: double-click → pick → done, on both platforms.
