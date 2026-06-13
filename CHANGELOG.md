@@ -3,6 +3,35 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.20.0] — 2026-06-13
+
+Windows parity: a real app icon and a clean, console-free launch.
+
+### Added
+- `Make filmify app.bat`: run once and it creates a **filmify** shortcut —
+  with the app icon — on the Desktop and in the Start menu (pin it to the
+  taskbar if you like). The Windows analog of the Mac's locally-built app:
+  built on the user's own machine, so it's trusted. From then on it's just
+  click the icon.
+- `filmify.ico`: the logo as a proper multi-size Windows icon (16–256 px),
+  shipped in the repo (unlike the Mac .icns, .ico generates cleanly
+  cross-platform so no build step is needed).
+- `filmify-quiet.vbs`: launches everything fully windowless — no console
+  flash at all, matching the Mac's silent launch.
+
+### Changed
+- The Windows launcher is now panel-first, like the Mac (v0.19): it opens
+  straight to the import panel where you pick or drop a clip, instead of
+  pre-picking a file and quitting on cancel. A dragged file or folder still
+  works as a shortcut.
+
+### Note
+- The one unavoidable Windows prompt is SmartScreen ("Windows protected
+  your PC") on first run of a downloaded file — click **More info → Run
+  anyway**, once. Removing it entirely needs a code-signing certificate
+  (~$200–400/yr), the Windows equivalent of Apple notarization; building
+  the shortcut locally is the free workaround, same philosophy as the Mac.
+
 ## [0.19.0] — 2026-06-13
 
 ### Fixed

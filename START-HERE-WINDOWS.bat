@@ -60,31 +60,27 @@ if defined NEEDFF (
   echo   FFmpeg ready.
 )
 
-rem ---- Pick the input ----------------------------------------------------------
+rem ---- Launch ------------------------------------------------------------------
+rem Panel-first: open straight to the import panel. The user picks or drops
+rem a clip from inside it (matches the Mac flow). A dragged file/folder still
+rem works as a shortcut.
 set "PICK=%~1"
-if not defined PICK (
-  for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.OpenFileDialog; $f.Title='filmify - choose a video clip (Cancel to pick a folder instead)'; $f.Filter='Video files|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm;*.mts|All files|*.*'; if($f.ShowDialog() -eq 'OK'){$f.FileName}"`) do set "PICK=%%I"
-)
-if not defined PICK (
-  for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description='filmify - choose a folder of clips to batch'; if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}"`) do set "PICK=%%I"
-)
-if not defined PICK (
-  echo   Nothing chosen -- closing.
-  pause
-  exit /b 0
+if "%PICK%"=="--quiet" set "PICK="
+
+if defined PICK (
+  if exist "%PICK%\" (
+    rem Folder dragged on: batch a fast split-screen preview
+    %PY% "%SCRIPT%" "%PICK%" --compare --preview
+    echo.
+    pause
+    exit /b 0
+  )
 )
 
-if exist "%PICK%\" (
-  rem Folder: batch a fast split-screen preview of every clip
-  %PY% "%SCRIPT%" "%PICK%" --compare --preview
+rem Open the panel windowless (pythonw); the browser is the whole UI.
+if defined PICK (
+  where pythonw >nul 2>nul && (start "" pythonw "%SCRIPT%" "%PICK%" --ui) || (start "" %PY% "%SCRIPT%" "%PICK%" --ui)
 ) else (
-  rem Single clip: open the control panel in the browser
-  echo.
-  echo   Opening the filmify panel in your browser.
-  echo   The panel will open in your browser; you can close this window.
-  echo.
-  rem pythonw runs the panel windowless; fall back to %PY% if absent
-  where pythonw >nul 2>nul && (start "" pythonw "%SCRIPT%" "%PICK%" --ui) || (%PY% "%SCRIPT%" "%PICK%" --ui)
+  where pythonw >nul 2>nul && (start "" pythonw "%SCRIPT%" --ui) || (start "" %PY% "%SCRIPT%" --ui)
 )
-echo.
-pause
+exit /b 0

@@ -21,10 +21,18 @@ for your OS. A native file picker appears — pick a clip and the control
 panel opens; pick a folder (Cancel on the file picker first) and the whole
 shoot gets a batch split-screen preview.
 
-- **Windows** — double-click `START-HERE-WINDOWS.bat`. First run: if
-  FFmpeg is missing it offers to download the official Windows build from
-  gyan.dev (the build ffmpeg.org links to) next to the script — nothing
-  installs system-wide.
+- **Windows** — for the smoothest experience, double-click
+  **`Make filmify app.bat`** once. It puts a **filmify** icon on your
+  Desktop and in the Start menu (pin it to the taskbar if you like) — click
+  it any time, no console window, opens straight to the panel. The first
+  run of any downloaded file may show SmartScreen ("Windows protected your
+  PC") — click **More info → Run anyway**, once. *(Setup — Python, FFmpeg —
+  is handled automatically the first time; FFmpeg is downloaded from
+  gyan.dev, the build ffmpeg.org links to, and kept next to the app,
+  nothing system-wide.)*
+
+  Prefer not to make a shortcut? `START-HERE-WINDOWS.bat` works the same
+  way on a double-click.
 - **Mac** — for the smoothest experience, **right-click**
   `make-mac-app.command` → **Open** → **Open** once. It builds a real
   **filmify app** in the folder that you double-click like any other
