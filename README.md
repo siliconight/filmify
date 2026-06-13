@@ -23,12 +23,17 @@ shoot gets a batch split-screen preview.
   FFmpeg is missing it offers to download the official Windows build from
   gyan.dev (the build ffmpeg.org links to) next to the script — nothing
   installs system-wide.
-- **Mac** — **right-click** `START-HERE-MAC.command` → **Open** → **Open**
-  the first time (macOS is cautious about downloaded scripts; afterwards a
-  plain double-click works). If macOS offers to install command line
-  developer tools, click **Install** — that's Apple's own installer giving
-  you Python. FFmpeg is offered the same way as on Windows (Intel and
-  Apple Silicon auto-detected).
+- **Mac** — for the smoothest experience, **right-click**
+  `make-mac-app.command` → **Open** → **Open** once. It builds a real
+  **filmify app** in the folder that you double-click like any other
+  program from then on (drag it to your Dock if you like) — no Terminal,
+  no right-click ever again. Setup (Python, FFmpeg) is handled through
+  normal Mac dialogs the first time you open it. *(That one right-click is
+  unavoidable for any free unsigned app; building the app locally is what
+  lets every launch after it be a clean double-click.)*
+
+  Prefer not to build an app? `START-HERE-MAC.command` still works the same
+  way — right-click → Open the first time.
 
   Setup steps happen once; after that it's double-click → pick → done.
 

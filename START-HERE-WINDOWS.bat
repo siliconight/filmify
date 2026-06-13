@@ -81,9 +81,10 @@ if exist "%PICK%\" (
   rem Single clip: open the control panel in the browser
   echo.
   echo   Opening the filmify panel in your browser.
-  echo   Keep this window open while you work; close it when done.
+  echo   The panel will open in your browser; you can close this window.
   echo.
-  %PY% "%SCRIPT%" "%PICK%" --ui
+  rem pythonw runs the panel windowless; fall back to %PY% if absent
+  where pythonw >nul 2>nul && (start "" pythonw "%SCRIPT%" "%PICK%" --ui) || (%PY% "%SCRIPT%" "%PICK%" --ui)
 )
 echo.
 pause

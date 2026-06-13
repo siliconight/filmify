@@ -3,6 +3,30 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.18.0] — 2026-06-12
+
+Mac-first "just works" release: a real app icon, no Terminal.
+
+### Added
+- `make-mac-app.command`: run once (right-click → Open) and it builds a
+  native **filmify.app** locally via osacompile — no Xcode, no Script
+  Editor, no $99 developer account. Because the app is built on the user's
+  own Mac it isn't quarantined, so every launch afterward is a clean
+  double-click (and it's Dock-draggable). The one unavoidable right-click
+  is on the builder, once.
+- `filmify-launch.sh`: the engine behind the app. All first-run setup runs
+  through native macOS dialogs and notifications — Python (via Apple's own
+  installer prompt), FFmpeg consent and download — with no Terminal text to
+  read. Then a native file picker, then the panel.
+- Panel auto-shutdown: when launched without a terminal (the app), the
+  server has no Ctrl+C, so the page sends a heartbeat and the server exits
+  on its own ~30s after the browser tab closes. Verified: stays up while
+  pinged, shuts down ~50s after pings stop.
+
+### Changed
+- Windows panel launch is now windowless (`pythonw` when available), so the
+  console no longer lingers behind the browser.
+
 ## [0.17.0] — 2026-06-12
 
 Forum-sourced authenticity pass — the film qualities cinematographers cite

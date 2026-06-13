@@ -1253,6 +1253,8 @@ $("gx").onclick = () => {
 };
 buildCards();
 refresh();
+setInterval(() => { fetch("/alive").catch(()=>{}); }, 8000);
+fetch("/alive").catch(()=>{});
 </script></body></html>"""
 
 
@@ -1428,6 +1430,9 @@ def run_ui(args) -> None:
             elif self.path == "/status":
                 self._send(200, "application/json",
                            _json.dumps(state).encode())
+            elif self.path == "/alive":
+                self.server._last_ping = __import__("time").time()
+                self._send(200, "application/json", b'{"ok":true}')
             else:
                 self._send(404, "text/plain", b"not found")
 
@@ -1459,11 +1464,28 @@ def run_ui(args) -> None:
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     print(f"filmify panel: {url}")
-    print("(Ctrl+C here closes it)")
+    print("(Ctrl+C here closes it, or just close the browser tab)")
     try:
         webbrowser.open(url)
     except Exception:  # noqa: BLE001
         pass
+
+    # When launched without a terminal (the Mac .app / silent launcher),
+    # there's no Ctrl+C to stop the server — so it exits on its own once the
+    # browser tab goes away. The page pings /alive periodically; if the
+    # pings stop for a grace period, shut down.
+    import threading
+    import time as _time
+
+    def watchdog():
+        while True:
+            _time.sleep(20)
+            last = getattr(httpd, "_last_ping", 0)
+            if last and (_time.time() - last) > 30:
+                httpd.shutdown()
+                return
+
+    threading.Thread(target=watchdog, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
