@@ -57,22 +57,6 @@ if ! have ffmpeg || ! have ffprobe; then
 fi
 
 # ---- Pick a clip and launch the panel --------------------------------------
-PICK=$(osascript -e 'try' \
-  -e 'POSIX path of (choose file with prompt "filmify — choose a video clip (Cancel to pick a folder of clips)")' \
-  -e 'end try' 2>/dev/null)
-if [ -z "$PICK" ]; then
-  PICK=$(osascript -e 'try' \
-    -e 'POSIX path of (choose folder with prompt "filmify — choose a folder of clips to batch")' \
-    -e 'end try' 2>/dev/null)
-fi
-[ -z "$PICK" ] && exit 0
-
-PY=python3
-if [ -d "$PICK" ]; then
-  # Folder: batch the whole thing, then show the report (no panel)
-  osascript -e 'display notification "Processing your clips… the report opens when done." with title "filmify"' 2>/dev/null
-  "$PY" filmify.py "$PICK" --compare --preview >/dev/null 2>&1
-else
-  # Single clip: open the control panel. run_ui opens the browser itself.
-  "$PY" filmify.py "$PICK" --ui >/dev/null 2>&1
-fi
+# Open the control panel straight away — the user imports a clip from inside
+# it (drop zone or native picker). No pre-pick, no quitting if they cancel.
+python3 filmify.py --ui >/dev/null 2>&1

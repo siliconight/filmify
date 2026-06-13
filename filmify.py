@@ -762,17 +762,10 @@ def build_filtergraph(args, info: dict) -> str:
     # -- 13. Vignette ------------------------------------------------------------
     if not args.no_vignette:
         if depth10:
-            # The vignette filter is 8-bit-only (verified empirically) and
-            # would silently bottleneck the chain. Instead: render the
-            # falloff as an 8-bit mask on a white source, upconvert, smooth
-            # the quantization steps away with a blur, and multiply it into
-            # the luma plane only (chroma passes through untouched).
+            # vignette runs fine at 10-bit in RGB (the earlier "8-bit only"
+            # workaround mishandled YUV chroma and turned neutrals magenta).
             graph += (
-                f";color=c=white:s={w_px}x{h_px}:r={out_fps:g},"
-                f"vignette=angle={p['vignette']},format={wfmt},gblur=sigma=3[vm];"
-                f"{cur}[vm]blend=c0_mode=multiply:"
-                f"c1_mode=normal:c1_opacity=0:c2_mode=normal:c2_opacity=0:"
-                f"shortest=1[vg]"
+                f";{cur}format={rgbfmt},vignette=angle={p['vignette']}[vg]"
             )
             cur = "[vg]"
         else:
@@ -1030,6 +1023,9 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 .scard div{font-size:11px;text-align:center;padding:3px 2px;color:var(--dim);text-transform:capitalize}
 .scard.sel div{color:var(--acc)}
 #guide{background:#241f19;border:1px solid #3a3128;color:#cdbfa8;border-radius:8px;padding:7px 12px;font-size:12.5px;max-width:960px;width:100%;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;gap:8px}
+#import{width:100%;max-width:960px}
+#dropzone{border:2px dashed var(--line);border-radius:12px;padding:60px 20px;text-align:center;color:var(--dim);background:var(--panel);transition:border-color .15s,background .15s}
+#dropzone.drag{border-color:var(--acc);background:#241c14}
 #gx{cursor:pointer;color:#a89f90;padding:0 4px}
 #rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
 </style></head><body>
@@ -1106,7 +1102,16 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div id="status"></div>
 </div>
 <div id="main">
-  <div id="guide">&#9312; Click a style below that looks right &nbsp;&rarr;&nbsp; &#9313; fine-tune with the sliders &nbsp;&rarr;&nbsp; &#9314; Save look &nbsp;&rarr;&nbsp; &#9315; Render <span id="gx">&#10005;</span></div>
+  <div id="import">
+    <div id="dropzone">
+      <div style="font-size:42px;margin-bottom:8px">&#127909;</div>
+      <div style="font-size:16px;color:var(--tx);margin-bottom:4px">Drop a video here</div>
+      <div style="font-size:13px;margin-bottom:16px">or</div>
+      <button id="chooseBtn" style="width:auto;padding:9px 20px">Choose a video…</button>
+      <div id="importmsg" style="margin-top:12px;font-size:12px;min-height:1em"></div>
+    </div>
+  </div>
+  <div id="guide" hidden>&#9312; Click a style below that looks right &nbsp;&rarr;&nbsp; &#9313; fine-tune with the sliders &nbsp;&rarr;&nbsp; &#9314; Save look &nbsp;&rarr;&nbsp; &#9315; Render <span id="gx">&#10005;</span></div>
   <div id="cards"></div>
   <img id="prev" alt="preview">
   <div id="rendered" hidden>&#10003; <span id="rname"></span> — this is a frame from the finished file</div>
@@ -1251,8 +1256,39 @@ $("gx").onclick = () => {
   $("guide").hidden = true;
   try { localStorage.setItem("filmify_guide_done", "1"); } catch(e) {}
 };
-buildCards();
-refresh();
+const HAS_CLIP_INIT = __HAS_CLIP__;
+function showEditor(name){
+  $("import").hidden = true;
+  $("cards").hidden = false; $("prev").hidden = false; $("scrubrow").hidden = false;
+  if (name) document.querySelector(".fn").textContent = name;
+  try { if (!localStorage.getItem("filmify_guide_done")) $("guide").hidden = false; } catch(e){ $("guide").hidden = false; }
+  buildCards();
+  refresh();
+}
+function showImport(){
+  $("import").hidden = false;
+  $("cards").hidden = true; $("prev").hidden = true; $("scrubrow").hidden = true;
+  $("guide").hidden = true;
+}
+async function loadPath(path){
+  $("importmsg").textContent = "loading\u2026";
+  try {
+    const r = await (await fetch("/load", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path||""})})).json();
+    if (r.ok){ showEditor(r.name); }
+    else if (r.cancel){ $("importmsg").textContent = ""; }
+    else { $("importmsg").textContent = r.error || "couldn't load that file"; }
+  } catch(e){ $("importmsg").textContent = "load failed"; }
+}
+$("chooseBtn").onclick = () => loadPath("");   // server opens the native picker
+const dz = $("dropzone");
+["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, e => {e.preventDefault(); dz.classList.add("drag");}));
+["dragleave","drop"].forEach(ev => dz.addEventListener(ev, e => {e.preventDefault(); dz.classList.remove("drag");}));
+dz.addEventListener("drop", e => {
+  const f = e.dataTransfer.files[0];
+  if (f && f.path) loadPath(f.path); else loadPath("");  // fall back to picker
+});
+
+if (HAS_CLIP_INIT) showEditor(); else showImport();
 setInterval(() => { fetch("/alive").catch(()=>{}); }, 8000);
 fetch("/alive").catch(()=>{});
 </script></body></html>"""
@@ -1320,20 +1356,50 @@ def run_ui(args) -> None:
     import threading
     import urllib.parse
 
-    src = args.input
-    info = probe(src)
-    dur = info["duration"] or 10.0
+    src = args.input   # may be None: panel opens in import state
+    cur = {"src": src, "info": probe(src) if src else None}
     state = {"rendering": False, "done": None, "error": None}
+
+    def pick_file_dialog():
+        """Open the OS-native file picker and return a path, or '' on cancel.
+        Runs on the machine hosting the panel (the user's own machine)."""
+        try:
+            if sys.platform == "darwin":
+                out = subprocess.run(
+                    ["osascript", "-e",
+                     'POSIX path of (choose file with prompt '
+                     '"filmify — choose a video clip" of type '
+                     '{"public.movie","public.video"})'],
+                    capture_output=True, text=True, timeout=300)
+                return out.stdout.strip()
+            if os.name == "nt":
+                ps = ('Add-Type -AssemblyName System.Windows.Forms;'
+                      '$f=New-Object System.Windows.Forms.OpenFileDialog;'
+                      "$f.Filter='Video|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm;*.mts|All|*.*';"
+                      "if($f.ShowDialog() -eq 'OK'){$f.FileName}")
+                out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                     capture_output=True, text=True, timeout=300)
+                return out.stdout.strip()
+        except (subprocess.TimeoutExpired, OSError):
+            return ""
+        return ""
+
+    def fname():
+        return cur["src"].name if cur["src"] else ""
+
+    def dur():
+        return (cur["info"]["duration"] or 10.0) if cur["info"] else 10.0
 
     page = (UI_PAGE
             .replace("__VERSION__", __version__)
-            .replace("__FILENAME__", html.escape(src.name))
-            .replace("__DUR__", f"{dur:.0f}")
+            .replace("__FILENAME__", html.escape(fname()))
+            .replace("__DUR__", f"{dur():.0f}")
             .replace("__STYLE_OPTS__", "".join(
                 f'<option value="{s}">{s}</option>' for s in sorted(STYLES)))
             .replace("__STYLES_JSON__", json.dumps(STYLES)))
     looks = {}
-    for j in sorted(src.parent.glob("*.json")):
+    look_dir = (src.parent if src else Path.cwd())
+    for j in sorted(look_dir.glob("*.json")):
         try:
             d = json.loads(j.read_text(encoding="utf-8"))
             if isinstance(d, dict) and "filmify_version" in d:
@@ -1344,16 +1410,21 @@ def run_ui(args) -> None:
             .replace("__LOOK_OPTS__", "".join(
                 f'<option value="{html.escape(n)}">{html.escape(n)}</option>'
                 for n in looks))
-            .replace("__LOOKS_JSON__", json.dumps(looks)))
+            .replace("__LOOKS_JSON__", json.dumps(looks))
+            .replace("__HAS_CLIP__", "true" if cur["src"] else "false"))
 
     def preview_jpeg(q):
+        if not cur["src"]:
+            raise RuntimeError("no clip loaded")
+        info = cur["info"]
         a = _ui_args(args, q)
         _ui_loglut(a)
         if a.lut and not a.lut.exists():
             a.lut = None
         if a.grain_plate and not a.grain_plate.exists():
             a.grain_plate = None
-        t = max(0.0, min(dur * 0.98, dur * float(q.get("t", 40)) / 100.0))
+        d = info["duration"] or 10.0
+        t = max(0.0, min(d * 0.98, d * float(q.get("t", 40)) / 100.0))
         # Proxy: scale FIRST, then run every filter at proxy resolution —
         # the difference between sluggish and plugin-instant on 4K footage.
         pw = min(max(120, int(float(q.get("pw", 960)))), 1280, info["width"])
@@ -1361,7 +1432,7 @@ def run_ui(args) -> None:
         pinfo = dict(info, width=pw, height=ph)
         graph = build_filtergraph(a, pinfo)
         graph = graph.replace("[0:v]", f"[0:v]scale={pw}:{ph},", 1)
-        cmd = [FFMPEG, "-v", "error", "-ss", f"{t:.2f}", "-i", str(src)]
+        cmd = [FFMPEG, "-v", "error", "-ss", f"{t:.2f}", "-i", str(cur["src"])]
         if a.grain_plate:
             cmd += ["-stream_loop", "-1", "-i", str(a.grain_plate)]
         cmd += ["-filter_complex", graph, "-map", "[vout]", "-frames:v", "1",
@@ -1372,16 +1443,20 @@ def run_ui(args) -> None:
         return out.stdout
 
     def do_render(q):
+        if not cur["src"]:
+            state.update(rendering=False, error="no clip loaded")
+            return
+        s = cur["src"]
         a = _ui_args(args, q)
         _ui_loglut(a)
         a.compare = False
         a.preview = None
         a.dry_run = False
         ext2 = ".mp4" if a.codec == "h264" else ".mov"
-        out = src.with_name(src.stem + "_film" + ext2)
+        out = s.with_name(s.stem + "_film" + ext2)
         state.update(rendering=True, done=None, error=None)
         try:
-            res = render(src, out, a)
+            res = render(s, out, a)
             if res["ok"]:
                 state.update(rendering=False, done=str(out))
             else:
@@ -1433,6 +1508,10 @@ def run_ui(args) -> None:
             elif self.path == "/alive":
                 self.server._last_ping = __import__("time").time()
                 self._send(200, "application/json", b'{"ok":true}')
+            elif self.path == "/loaded":
+                # tell the page what clip (if any) is active
+                self._send(200, "application/json", _json.dumps(
+                    {"name": fname(), "dur": dur() if cur["src"] else 0}).encode())
             else:
                 self._send(404, "text/plain", b"not found")
 
@@ -1440,13 +1519,36 @@ def run_ui(args) -> None:
             n = int(self.headers.get("Content-Length", 0))
             q = _json.loads(self.rfile.read(n) or b"{}")
             q = {k: ("" if v is None else v) for k, v in q.items()}
-            if self.path == "/save":
+            if self.path == "/load":
+                # open the native picker (or accept a dropped path), probe it,
+                # make it the active clip — no restart needed
+                p = (q.get("path") or "").strip() or pick_file_dialog()
+                if not p:
+                    self._send(200, "application/json", b'{"ok": false, "cancel": true}')
+                    return
+                path = Path(p)
+                if not path.exists():
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": False, "error": f"not found: {p}"}).encode())
+                    return
                 try:
+                    cur["src"] = path
+                    cur["info"] = probe(path)
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": True, "name": path.name,
+                         "dur": cur["info"]["duration"] or 10.0}).encode())
+                except RuntimeError as exc:
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": False, "error": str(exc)}).encode())
+            elif self.path == "/save":
+                try:
+                    if not cur["src"]:
+                        raise RuntimeError("load a clip first")
                     a = _ui_args(args, q)
                     name = Path(str(q.get("lookname") or "myfilm")).name
                     if not name.endswith(".json"):
                         name += ".json"
-                    a.save_look = src.parent / name
+                    a.save_look = cur["src"].parent / name
                     save_look_file(a)
                     self._send(200, "application/json", _json.dumps(
                         {"ok": True, "path": str(a.save_look)}).encode())
@@ -1500,8 +1602,9 @@ def main() -> None:
         description="Process digital video to look like physical film.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    ap.add_argument("input", type=Path,
-                    help="input video file, or a folder to batch-process")
+    ap.add_argument("input", type=Path, nargs="?", default=None,
+                    help="input video file, or a folder to batch-process "
+                         "(optional with --ui: import from the panel instead)")
     ap.add_argument("-o", "--output", type=Path, default=None,
                     help="output file (or output folder in batch mode)")
     ap.add_argument("-V", "--version", action="version",
@@ -1645,7 +1748,10 @@ def main() -> None:
                 f"  Windows: winget install ffmpeg   (or drop {name}.exe next to filmify.py)\n"
                 f"  macOS  : brew install ffmpeg"
             )
-    if not args.input.exists():
+    if args.input is None and not args.ui:
+        sys.exit("error: need an input file or folder (or use --ui to open "
+                 "the panel and import one)")
+    if args.input is not None and not args.input.exists():
         sys.exit(f"error: {args.input} not found")
     for opt in ("lut", "grain_plate"):
         f = getattr(args, opt)
@@ -1660,9 +1766,10 @@ def main() -> None:
         save_look_file(args)
 
     if args.ui:
-        if args.input.is_dir():
-            sys.exit("error: --ui needs a single clip to preview "
-                     "(dial in the look on one, then batch the folder)")
+        if args.input is not None and args.input.is_dir():
+            sys.exit("error: --ui needs a single clip (or none — you can "
+                     "import one from the panel). For a folder, drop the "
+                     "--ui flag to batch it.")
         run_ui(args)
         return
 

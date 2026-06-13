@@ -3,6 +3,27 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.19.0] — 2026-06-13
+
+### Fixed
+- **10-bit magenta bug (the pink previews):** the v0.9 10-bit vignette used
+  a luma-multiply workaround built on the wrong assumption that the vignette
+  filter is 8-bit-only — it mishandled the YUV chroma planes and shifted
+  neutrals to magenta. Every 10-bit style (anamorphic, epic, blockbuster)
+  was affected, which is why those gallery cards rendered pink. The vignette
+  runs fine at 10-bit in RGB; the workaround is gone. Verified: 10-bit gray
+  now renders (143,133,126), matching the 8-bit baseline, vs the broken
+  (254,132,255).
+
+### Changed
+- **Panel-first flow:** `--ui` now opens the control panel immediately, with
+  an import screen — a drop zone and a "Choose a video…" button — instead of
+  requiring a clip up front and quitting if you didn't pick one. Import a
+  clip from inside the panel (native file picker, or drag-and-drop where the
+  browser exposes the path) and editing begins; the server swaps the active
+  clip with no restart. The Mac app and launchers can now open straight to
+  the panel.
+
 ## [0.18.2] — 2026-06-12
 
 ### Added
