@@ -3,6 +3,16 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.18.1] — 2026-06-12
+
+### Added
+- App icon: `make-mac-app.command` now builds a proper `.icns` from the
+  bundled `filmify_icon_1024.png` (via the Mac-native sips + iconutil) and
+  assigns it to filmify.app, so the Dock/Finder show the real logo — the
+  film-strip-into-developing-tray mark. Generated locally, same as the app.
+- The control panel is branded too: the logo is the browser-tab favicon and
+  sits in the panel header.
+
 ## [0.18.0] — 2026-06-12
 
 Mac-first "just works" release: a real app icon, no Terminal.

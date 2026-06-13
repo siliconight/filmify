@@ -40,6 +40,22 @@ if [ -f "$PLIST" ]; then
   /usr/libexec/PlistBuddy -c "Add :LSBackgroundOnly bool false" "$PLIST" 2>/dev/null
 fi
 
+# Build the app icon from the bundled PNG, locally (iconutil is Mac-only,
+# which is why we generate the .icns here rather than shipping one).
+ICON_PNG="$HERE/filmify_icon_1024.png"
+if [ -f "$ICON_PNG" ] && command -v iconutil >/dev/null 2>&1; then
+  ICONSET="$(mktemp -d)/filmify.iconset"
+  mkdir -p "$ICONSET"
+  for sz in 16 32 64 128 256 512; do
+    sips -z $sz $sz "$ICON_PNG" --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null 2>&1
+    sips -z $((sz*2)) $((sz*2)) "$ICON_PNG" --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null 2>&1
+  done
+  if iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/applet.icns" 2>/dev/null; then
+    touch "$APP" 2>/dev/null   # nudge Finder to refresh the icon
+  fi
+  rm -rf "$(dirname "$ICONSET")"
+fi
+
 echo
 echo "  Done. There is now a 'filmify' app in this folder."
 echo "  Double-click it any time — drag it to your Dock if you like."
