@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.22.0"
+__version__ = "0.22.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1302,7 +1302,10 @@ function showImport(){
   $("guide").hidden = true;
 }
 async function loadPath(path){
-  $("importmsg").textContent = "loading\u2026";
+  // If we have no path, the server is about to open the OS file picker —
+  // tell the user to look for it (it can surface in front of the browser).
+  $("importmsg").textContent = path ? "loading\u2026"
+    : "opening file picker\u2026 (check for the dialog window)";
   try {
     const r = await (await fetch("/load", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path||""})})).json();
     if (r.ok){ showEditor(r.name); }
@@ -1403,44 +1406,56 @@ def run_ui(args) -> None:
 
     def pick_file_dialog():
         """Open the OS-native file picker and return a path, or '' on cancel.
-        Runs on the machine hosting the panel (the user's own machine)."""
+        Forced to the foreground so it surfaces over a fullscreen browser."""
         try:
             if sys.platform == "darwin":
                 out = run(
-                    ["osascript", "-e",
-                     'POSIX path of (choose file with prompt '
-                     '"filmify — choose a video clip" of type '
-                     '{"public.movie","public.video"})'],
+                    ["osascript",
+                     "-e", 'tell application "System Events" to activate',
+                     "-e", 'POSIX path of (choose file with prompt '
+                           '"filmify — choose a video clip" of type '
+                           '{"public.movie","public.video"})'],
                     capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
             if os.name == "nt":
+                # A TopMost hidden form owns the dialog, forcing it above the
+                # browser (otherwise it opens behind a fullscreen window).
                 ps = ('Add-Type -AssemblyName System.Windows.Forms;'
+                      '$owner=New-Object System.Windows.Forms.Form;'
+                      '$owner.TopMost=$true;$owner.ShowInTaskbar=$false;'
+                      '$owner.Opacity=0;$owner.Show();$owner.Activate();'
                       '$f=New-Object System.Windows.Forms.OpenFileDialog;'
                       "$f.Filter='Video|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm;*.mts|All|*.*';"
-                      "if($f.ShowDialog() -eq 'OK'){$f.FileName}")
-                out = run(["powershell", "-NoProfile", "-Command", ps],
-                                     capture_output=True, text=True, timeout=300)
+                      "$r=$f.ShowDialog($owner);$owner.Close();"
+                      "if($r -eq 'OK'){$f.FileName}")
+                out = run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                          capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
         except (subprocess.TimeoutExpired, OSError):
             return ""
         return ""
 
     def pick_folder_dialog():
-        """Native folder picker for choosing an output destination."""
+        """Native folder picker (output destination), forced to the front."""
         try:
             if sys.platform == "darwin":
                 out = run(
-                    ["osascript", "-e",
-                     'POSIX path of (choose folder with prompt '
-                     '"filmify — choose where to save renders")'],
+                    ["osascript",
+                     "-e", 'tell application "System Events" to activate',
+                     "-e", 'POSIX path of (choose folder with prompt '
+                           '"filmify — choose where to save renders")'],
                     capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
             if os.name == "nt":
                 ps = ('Add-Type -AssemblyName System.Windows.Forms;'
+                      '$owner=New-Object System.Windows.Forms.Form;'
+                      '$owner.TopMost=$true;$owner.ShowInTaskbar=$false;'
+                      '$owner.Opacity=0;$owner.Show();$owner.Activate();'
                       '$f=New-Object System.Windows.Forms.FolderBrowserDialog;'
                       "$f.Description='filmify - choose where to save renders';"
-                      "if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}")
-                out = run(["powershell", "-NoProfile", "-Command", ps],
+                      "$r=$f.ShowDialog($owner);$owner.Close();"
+                      "if($r -eq 'OK'){$f.SelectedPath}")
+                out = run(["powershell", "-NoProfile", "-STA", "-Command", ps],
                           capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
         except (subprocess.TimeoutExpired, OSError):

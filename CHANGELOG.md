@@ -3,6 +3,17 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.22.1] — 2026-06-13
+
+### Fixed
+- **File/folder pickers opening behind the browser:** on a fullscreen
+  browser, clicking "Choose a video…" or "Save to…" opened the native
+  dialog hidden behind the window, so it looked like nothing happened. The
+  dialogs are now forced to the foreground — Windows via a TopMost owner
+  form (and -STA PowerShell), Mac via a System Events activate. The import
+  message also now says "opening file picker… (check for the dialog
+  window)" so it's clear to look for it.
+
 ## [0.22.0] — 2026-06-13
 
 Clean, user-facing downloads — one obvious thing to click.
