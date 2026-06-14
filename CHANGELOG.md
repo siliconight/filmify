@@ -3,6 +3,21 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.21.0] — 2026-06-13
+
+Export clarity — knowing where your finished file went.
+
+### Added
+- "Show in folder" button on the render-done banner: opens Finder/Explorer
+  with the finished file highlighted (native reveal — `open -R` on Mac,
+  `explorer /select,` on Windows). The fix for "okay… where did it go?"
+- The done banner now reads "saved: <full path>", not just the filename.
+- "Save to…" destination picker: choose where renders go (native folder
+  dialog), shown live near the Render button as "saves to: <folder>".
+  Defaults to next to your clip, as before.
+- Destination is stated *before* you render, not just after — no surprise
+  about where the file lands.
+
 ## [0.20.1] — 2026-06-13
 
 ### Fixed

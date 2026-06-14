@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.20.1"
+__version__ = "0.21.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -265,6 +265,20 @@ def run(cmd, **kw):
     if os.name == "nt":
         kw.setdefault("creationflags", 0x08000000)  # CREATE_NO_WINDOW
     return subprocess.run(cmd, **kw)
+
+
+def reveal_in_file_manager(path: Path) -> None:
+    """Open the OS file manager with the given file highlighted."""
+    p = str(path)
+    try:
+        if sys.platform == "darwin":
+            run(["open", "-R", p])
+        elif os.name == "nt":
+            run(["explorer", "/select,", p])
+        else:
+            run(["xdg-open", str(path.parent)])
+    except OSError:
+        pass
 
 
 def find_tool(name: str):
@@ -1108,6 +1122,12 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <label>Save look as</label>
   <input type="text" id="lookname" value="myfilm">
   <button class="sec" id="saveBtn">Save look</button>
+
+  <div id="destrow" style="font-size:11px;color:var(--dim);margin:10px 0 2px">
+    saves to: <span id="destpath" style="color:var(--tx)">—</span>
+    <button class="sec" id="destBtn" style="width:auto;padding:3px 8px;margin:4px 0 0;font-size:11px">Save to…</button>
+  </div>
+
   <button id="renderBtn">Render full clip</button>
   <div id="status"></div>
 </div>
@@ -1124,7 +1144,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div id="guide" hidden>&#9312; Click a style below that looks right &nbsp;&rarr;&nbsp; &#9313; fine-tune with the sliders &nbsp;&rarr;&nbsp; &#9314; Save look &nbsp;&rarr;&nbsp; &#9315; Render <span id="gx">&#10005;</span></div>
   <div id="cards"></div>
   <img id="prev" alt="preview">
-  <div id="rendered" hidden>&#10003; <span id="rname"></span> — this is a frame from the finished file</div>
+  <div id="rendered" hidden>&#10003; saved: <span id="rname"></span> &nbsp;<button id="revealBtn" style="width:auto;padding:4px 12px;font-size:12px">Show in folder</button></div>
   <div id="scrubrow">0s <input type="range" id="scrub" min="0" max="100" value="40"> __DUR__s</div>
 </div>
 <script>
@@ -1274,6 +1294,7 @@ function showEditor(name){
   try { if (!localStorage.getItem("filmify_guide_done")) $("guide").hidden = false; } catch(e){ $("guide").hidden = false; }
   buildCards();
   refresh();
+  refreshDest();
 }
 function showImport(){
   $("import").hidden = false;
@@ -1297,6 +1318,16 @@ dz.addEventListener("drop", e => {
   const f = e.dataTransfer.files[0];
   if (f && f.path) loadPath(f.path); else loadPath("");  // fall back to picker
 });
+
+async function refreshDest(){
+  try { const r = await (await fetch("/destdir")).json();
+    $("destpath").textContent = r.dir || "next to your clip"; } catch(e){}
+}
+$("destBtn").onclick = async () => {
+  const r = await (await fetch("/setdest",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})).json();
+  if (r.ok){ $("destpath").textContent = r.dir; }
+};
+$("revealBtn").onclick = () => { fetch("/reveal").catch(()=>{}); };
 
 if (HAS_CLIP_INIT) showEditor(); else showImport();
 setInterval(() => { fetch("/alive").catch(()=>{}); }, 8000);
@@ -1367,7 +1398,7 @@ def run_ui(args) -> None:
     import urllib.parse
 
     src = args.input   # may be None: panel opens in import state
-    cur = {"src": src, "info": probe(src) if src else None}
+    cur = {"src": src, "info": probe(src) if src else None, "outdir": None}
     state = {"rendering": False, "done": None, "error": None}
 
     def pick_file_dialog():
@@ -1389,6 +1420,28 @@ def run_ui(args) -> None:
                       "if($f.ShowDialog() -eq 'OK'){$f.FileName}")
                 out = run(["powershell", "-NoProfile", "-Command", ps],
                                      capture_output=True, text=True, timeout=300)
+                return out.stdout.strip()
+        except (subprocess.TimeoutExpired, OSError):
+            return ""
+        return ""
+
+    def pick_folder_dialog():
+        """Native folder picker for choosing an output destination."""
+        try:
+            if sys.platform == "darwin":
+                out = run(
+                    ["osascript", "-e",
+                     'POSIX path of (choose folder with prompt '
+                     '"filmify — choose where to save renders")'],
+                    capture_output=True, text=True, timeout=300)
+                return out.stdout.strip()
+            if os.name == "nt":
+                ps = ('Add-Type -AssemblyName System.Windows.Forms;'
+                      '$f=New-Object System.Windows.Forms.FolderBrowserDialog;'
+                      "$f.Description='filmify - choose where to save renders';"
+                      "if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}")
+                out = run(["powershell", "-NoProfile", "-Command", ps],
+                          capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
         except (subprocess.TimeoutExpired, OSError):
             return ""
@@ -1463,7 +1516,8 @@ def run_ui(args) -> None:
         a.preview = None
         a.dry_run = False
         ext2 = ".mp4" if a.codec == "h264" else ".mov"
-        out = s.with_name(s.stem + "_film" + ext2)
+        outdir = cur["outdir"] or s.parent
+        out = outdir / (s.stem + "_film" + ext2)
         state.update(rendering=True, done=None, error=None)
         try:
             res = render(s, out, a)
@@ -1522,6 +1576,16 @@ def run_ui(args) -> None:
                 # tell the page what clip (if any) is active
                 self._send(200, "application/json", _json.dumps(
                     {"name": fname(), "dur": dur() if cur["src"] else 0}).encode())
+            elif self.path == "/destdir":
+                where = cur["outdir"] or (cur["src"].parent if cur["src"] else None)
+                self._send(200, "application/json", _json.dumps(
+                    {"dir": str(where) if where else ""}).encode())
+            elif self.path == "/reveal":
+                if state["done"]:
+                    reveal_in_file_manager(Path(state["done"]))
+                    self._send(200, "application/json", b'{"ok":true}')
+                else:
+                    self._send(404, "application/json", b'{"ok":false}')
             else:
                 self._send(404, "text/plain", b"not found")
 
@@ -1570,6 +1634,14 @@ def run_ui(args) -> None:
                     threading.Thread(target=do_render, args=(q,),
                                      daemon=True).start()
                 self._send(200, "application/json", b'{"ok": true}')
+            elif self.path == "/setdest":
+                p = (q.get("path") or "").strip() or pick_folder_dialog()
+                if p and Path(p).is_dir():
+                    cur["outdir"] = Path(p)
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": True, "dir": str(cur["outdir"])}).encode())
+                else:
+                    self._send(200, "application/json", b'{"ok": false}')
             else:
                 self._send(404, "text/plain", b"not found")
 
