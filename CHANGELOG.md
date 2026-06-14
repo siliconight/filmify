@@ -3,6 +3,16 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.23.1] — 2026-06-13
+
+### Fixed
+- File/folder picker still opening behind the browser on Windows: the
+  TopMost owner form alone wasn't winning the foreground. Now uses the
+  Win32 SetForegroundWindow + BringWindowToTop APIs on an off-screen
+  topmost owner to pull the dialog to the front. The waiting message also
+  now points to the taskbar in case Windows still refuses the foreground
+  grab (it can, by design).
+
 ## [0.23.0] — 2026-06-13
 
 ### Added

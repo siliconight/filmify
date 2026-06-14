@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.23.0"
+__version__ = "0.23.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1347,7 +1347,7 @@ async function loadPath(path){
   // If we have no path, the server is about to open the OS file picker —
   // tell the user to look for it (it can surface in front of the browser).
   $("importmsg").textContent = path ? "loading\u2026"
-    : "opening file picker\u2026 (check for the dialog window)";
+    : "opening the file picker\u2026 if you don't see it, check your taskbar or behind this window";
   try {
     const r = await (await fetch("/load", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path||""})})).json();
     if (r.ok){ showEditor(r.name); }
@@ -1460,16 +1460,34 @@ def run_ui(args) -> None:
                     capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
             if os.name == "nt":
-                # A TopMost hidden form owns the dialog, forcing it above the
-                # browser (otherwise it opens behind a fullscreen window).
-                ps = ('Add-Type -AssemblyName System.Windows.Forms;'
-                      '$owner=New-Object System.Windows.Forms.Form;'
-                      '$owner.TopMost=$true;$owner.ShowInTaskbar=$false;'
-                      '$owner.Opacity=0;$owner.Show();$owner.Activate();'
-                      '$f=New-Object System.Windows.Forms.OpenFileDialog;'
-                      "$f.Filter='Video|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm;*.mts|All|*.*';"
-                      "$r=$f.ShowDialog($owner);$owner.Close();"
-                      "if($r -eq 'OK'){$f.FileName}")
+                # Force the dialog to the foreground via the Win32 API — a
+                # TopMost owner form alone doesn't reliably beat the browser
+                # window. We create an owner form, push it to the front with
+                # SetForegroundWindow, and parent the dialog to it.
+                ps = (
+                    "Add-Type -AssemblyName System.Windows.Forms;"
+                    "Add-Type -AssemblyName System.Drawing;"
+                    'Add-Type @"\n'
+                    'using System;using System.Runtime.InteropServices;\n'
+                    'public class FG{\n'
+                    '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);\n'
+                    '[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);\n'
+                    '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int n);\n'
+                    '}\n'
+                    '"@;'
+                    '$o=New-Object System.Windows.Forms.Form;'
+                    '$o.TopMost=$true;$o.ShowInTaskbar=$false;'
+                    '$o.FormBorderStyle="None";$o.Width=1;$o.Height=1;'
+                    '$o.StartPosition="Manual";$o.Location='
+                    "New-Object System.Drawing.Point(-2000,-2000);"
+                    '$o.Show();$o.Activate();'
+                    '[FG]::ShowWindow($o.Handle,5)|Out-Null;'
+                    '[FG]::BringWindowToTop($o.Handle)|Out-Null;'
+                    '[FG]::SetForegroundWindow($o.Handle)|Out-Null;'
+                    '$f=New-Object System.Windows.Forms.OpenFileDialog;'
+                    "$f.Filter='Video|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm;*.mts|All|*.*';"
+                    '$r=$f.ShowDialog($o);$o.Close();'
+                    "if($r -eq 'OK'){$f.FileName}")
                 out = run(["powershell", "-NoProfile", "-STA", "-Command", ps],
                           capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
@@ -1489,14 +1507,30 @@ def run_ui(args) -> None:
                     capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
             if os.name == "nt":
-                ps = ('Add-Type -AssemblyName System.Windows.Forms;'
-                      '$owner=New-Object System.Windows.Forms.Form;'
-                      '$owner.TopMost=$true;$owner.ShowInTaskbar=$false;'
-                      '$owner.Opacity=0;$owner.Show();$owner.Activate();'
-                      '$f=New-Object System.Windows.Forms.FolderBrowserDialog;'
-                      "$f.Description='filmify - choose where to save renders';"
-                      "$r=$f.ShowDialog($owner);$owner.Close();"
-                      "if($r -eq 'OK'){$f.SelectedPath}")
+                ps = (
+                    "Add-Type -AssemblyName System.Windows.Forms;"
+                    "Add-Type -AssemblyName System.Drawing;"
+                    'Add-Type @"\n'
+                    'using System;using System.Runtime.InteropServices;\n'
+                    'public class FG2{\n'
+                    '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);\n'
+                    '[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);\n'
+                    '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int n);\n'
+                    '}\n'
+                    '"@;'
+                    '$o=New-Object System.Windows.Forms.Form;'
+                    '$o.TopMost=$true;$o.ShowInTaskbar=$false;'
+                    '$o.FormBorderStyle="None";$o.Width=1;$o.Height=1;'
+                    '$o.StartPosition="Manual";$o.Location='
+                    "New-Object System.Drawing.Point(-2000,-2000);"
+                    '$o.Show();$o.Activate();'
+                    '[FG2]::ShowWindow($o.Handle,5)|Out-Null;'
+                    '[FG2]::BringWindowToTop($o.Handle)|Out-Null;'
+                    '[FG2]::SetForegroundWindow($o.Handle)|Out-Null;'
+                    '$f=New-Object System.Windows.Forms.FolderBrowserDialog;'
+                    "$f.Description='filmify - choose where to save renders';"
+                    '$r=$f.ShowDialog($o);$o.Close();'
+                    "if($r -eq 'OK'){$f.SelectedPath}")
                 out = run(["powershell", "-NoProfile", "-STA", "-Command", ps],
                           capture_output=True, text=True, timeout=300)
                 return out.stdout.strip()
