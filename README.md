@@ -4,7 +4,11 @@
 
 **The feel of film, without the film camera.**
 
-> **[⬇ Download filmify](https://github.com/siliconight/filmify/archive/refs/heads/master.zip)** — unzip, then double-click **START-HERE-WINDOWS.bat** or **START-HERE-MAC.command**. A file picker appears; pick a clip and the control panel opens. That's the whole install.
+## Download
+
+**[⬇ filmify for Mac](https://github.com/siliconight/filmify/raw/master/filmify-mac.zip)** &nbsp;·&nbsp; **[⬇ filmify for Windows](https://github.com/siliconight/filmify/raw/master/filmify-windows.zip)**
+
+Unzip, then double-click **Start filmify**. That's it — filmify opens in your browser. (First launch only: Mac → right-click Start filmify → Open; Windows → "More info" → "Run anyway". One time.)
 
 filmify is a lightweight, single-file tool for indie filmmakers. It makes
 what you shot better — it doesn't replace your taste. You still pick the

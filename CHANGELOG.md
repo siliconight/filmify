@@ -3,6 +3,25 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.22.0] — 2026-06-13
+
+Clean, user-facing downloads — one obvious thing to click.
+
+### Added
+- Per-OS packages: `filmify-mac.zip` and `filmify-windows.zip`, each
+  unzipping to a folder that shows just **Start filmify** and a Read Me —
+  all the machinery (filmify.py, launchers, icon, ffmpeg) is tucked into an
+  `app-files/` subfolder the user never needs to open. Linked at the top of
+  the README so non-technical users grab only the one for their OS.
+- `build-packages.py`: regenerates both zips from the repo, reading the
+  current version automatically. Run after each release. Executable bits on
+  the Mac `.command` are preserved through zipping (verified).
+
+### Note
+- The flat repo layout stays as-is for development/GitHub; the clean
+  packages are built from it. The two zips are committed so they're directly
+  downloadable and can be attached to GitHub Releases.
+
 ## [0.21.0] — 2026-06-13
 
 Export clarity — knowing where your finished file went.

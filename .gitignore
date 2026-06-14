@@ -1,6 +1,10 @@
-*.mp4
-*.mov
+*.log
 *.mkv
 *.mov
+*.mp4
+*.pyc
 *_report.html
+/dist/
+__pycache__/
 filmify_logo.png
+pv.jpg
