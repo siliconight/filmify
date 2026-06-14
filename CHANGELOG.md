@@ -3,6 +3,16 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.23.0] — 2026-06-13
+
+### Added
+- Render progress bar: the panel now shows a live progress bar and
+  percentage while a full clip renders, instead of a static "rendering full
+  clip…". Parsed from ffmpeg's own `-progress` output against the clip
+  duration, so it reflects real work done. The Render button disables during
+  the render and the bar fills to 100% on completion before the
+  "Show in folder" banner appears.
+
 ## [0.22.1] — 2026-06-13
 
 ### Fixed

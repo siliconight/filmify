@@ -56,7 +56,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.22.1"
+__version__ = "0.23.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -877,9 +877,10 @@ def fmt_size(n: float) -> str:
     return f"{n:.1f} GB"
 
 
-def render(src: Path, out: Path, args) -> dict:
+def render(src: Path, out: Path, args, progress_cb=None) -> dict:
     """Build and run the ffmpeg command for one file. Returns a result
-    record for the report; failures are recorded so a batch can continue."""
+    record for the report; failures are recorded so a batch can continue.
+    progress_cb, if given, is called with a 0-100 percentage as ffmpeg runs."""
     res = {"src": src, "out": out, "ok": False, "error": "",
            "fps_in": None, "fps_out": None, "size": None, "dur": None,
            "thumb_before": "", "thumb_after": ""}
@@ -945,7 +946,33 @@ def render(src: Path, out: Path, args) -> dict:
         res["ok"] = True
         return res
 
-    rc = run(cmd).returncode
+    if progress_cb is None:
+        rc = run(cmd).returncode
+    else:
+        # Total duration we're rendering, for percentage. Preview caps it.
+        total = info["duration"] or 0
+        if args.preview:
+            total = min(total, float(args.preview)) or float(args.preview)
+        # -progress pipe:1 emits machine-readable out_time_us=… lines.
+        pcmd = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+        kw = {}
+        if os.name == "nt":
+            kw["creationflags"] = 0x08000000
+        proc = subprocess.Popen(pcmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, **kw)
+        for line in proc.stdout:
+            line = line.strip()
+            if line.startswith("out_time_us=") and total > 0:
+                try:
+                    us = int(line.split("=", 1)[1])
+                    pct = max(0, min(99, int(us / 1e6 / total * 100)))
+                    progress_cb(pct)
+                except (ValueError, ZeroDivisionError):
+                    pass
+            elif line == "progress=end":
+                progress_cb(100)
+        proc.wait()
+        rc = proc.returncode
     if rc != 0:
         res["error"] = f"ffmpeg exited with code {rc} (see console output above)"
         print(f"FAILED: {res['error']}\n")
@@ -1050,6 +1077,8 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 #import{width:100%;max-width:960px}
 #dropzone{border:2px dashed var(--line);border-radius:12px;padding:60px 20px;text-align:center;color:var(--dim);background:var(--panel);transition:border-color .15s,background .15s}
 #dropzone.drag{border-color:var(--acc);background:#241c14}
+#progwrap{width:100%;height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:8px}
+#progfill{height:100%;width:0%;background:var(--acc);transition:width .3s ease}
 #gx{cursor:pointer;color:#a89f90;padding:0 4px}
 #rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
 </style></head><body>
@@ -1129,6 +1158,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   </div>
 
   <button id="renderBtn">Render full clip</button>
+  <div id="progwrap" hidden><div id="progfill"></div></div>
   <div id="status"></div>
 </div>
 <div id="main">
@@ -1263,21 +1293,33 @@ $("saveBtn").onclick = async () => {
 };
 $("renderBtn").onclick = async () => {
   $("rendered").hidden = true;
+  $("renderBtn").disabled = true;
+  $("progwrap").hidden = false;
+  $("progfill").style.width = "0%";
+  $("status").textContent = "starting render…";
   await post("/render", settings());
   const poll = setInterval(async () => {
     const s = await (await fetch("/status")).json();
-    if (s.rendering) { $("status").textContent = "rendering full clip…"; }
-    else {
+    if (s.rendering) {
+      const p = s.pct || 0;
+      $("progfill").style.width = p + "%";
+      $("status").textContent = "rendering full clip… " + p + "%";
+    } else {
       clearInterval(poll);
-      if (s.error) { $("status").textContent = "render failed: " + s.error; }
-      else {
+      $("renderBtn").disabled = false;
+      if (s.error) {
+        $("progwrap").hidden = true;
+        $("status").textContent = "render failed: " + s.error;
+      } else {
+        $("progfill").style.width = "100%";
+        setTimeout(() => { $("progwrap").hidden = true; }, 600);
         $("status").textContent = "";
         $("rname").textContent = s.done;
         $("rendered").hidden = false;
         $("prev").src = "/result_frame?_=" + Date.now();
       }
     }
-  }, 1000);
+  }, 700);
 };
 try {
   if (localStorage.getItem("filmify_guide_done")) $("guide").hidden = true;
@@ -1402,7 +1444,7 @@ def run_ui(args) -> None:
 
     src = args.input   # may be None: panel opens in import state
     cur = {"src": src, "info": probe(src) if src else None, "outdir": None}
-    state = {"rendering": False, "done": None, "error": None}
+    state = {"rendering": False, "done": None, "error": None, "pct": 0}
 
     def pick_file_dialog():
         """Open the OS-native file picker and return a path, or '' on cancel.
@@ -1533,11 +1575,12 @@ def run_ui(args) -> None:
         ext2 = ".mp4" if a.codec == "h264" else ".mov"
         outdir = cur["outdir"] or s.parent
         out = outdir / (s.stem + "_film" + ext2)
-        state.update(rendering=True, done=None, error=None)
+        state.update(rendering=True, done=None, error=None, pct=0)
         try:
-            res = render(s, out, a)
+            res = render(s, out, a,
+                         progress_cb=lambda p: state.update(pct=p))
             if res["ok"]:
-                state.update(rendering=False, done=str(out))
+                state.update(rendering=False, done=str(out), pct=100)
             else:
                 state.update(rendering=False, error=res["error"])
         except Exception as exc:  # noqa: BLE001 — surface anything to the panel
