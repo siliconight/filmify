@@ -3,6 +3,20 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.23.2] — 2026-06-13
+
+### Added
+- Name your export: a "Save the film as" field in the panel. Defaults to
+  `<yourclip>_film`; whatever you type is sanitized of illegal characters.
+- No more silent overwrites: if a file with the target name already exists,
+  filmify appends `-2`, `-3`, … instead of replacing it.
+
+### Fixed
+- "Show in folder" not working on Windows: explorer was being launched with
+  the no-window flag (which suppressed the very window it opens) and loose
+  path quoting. It's now called directly with a properly quoted, backslashed
+  path and explorer's quirky exit code ignored.
+
 ## [0.23.1] — 2026-06-13
 
 ### Fixed

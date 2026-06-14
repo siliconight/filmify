@@ -50,13 +50,14 @@ import datetime
 import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.23.1"
+__version__ = "0.23.2"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -269,14 +270,20 @@ def run(cmd, **kw):
 
 def reveal_in_file_manager(path: Path) -> None:
     """Open the OS file manager with the given file highlighted."""
-    p = str(path)
+    path = Path(path)
     try:
         if sys.platform == "darwin":
-            run(["open", "-R", p])
+            subprocess.run(["open", "-R", str(path)])
         elif os.name == "nt":
-            run(["explorer", "/select,", p])
+            # explorer is picky: it must be one argument string with the path
+            # quoted, it must NOT get CREATE_NO_WINDOW (that suppresses the
+            # window we're trying to open), and it returns exit code 1 even on
+            # success — so call it directly and ignore the code. Backslashes
+            # and the comma matter: explorer /select,"C:\dir\file.ext"
+            winpath = str(path).replace("/", "\\")
+            subprocess.Popen(f'explorer /select,"{winpath}"')
         else:
-            run(["xdg-open", str(path.parent)])
+            subprocess.run(["xdg-open", str(path.parent)])
     except OSError:
         pass
 
@@ -1152,6 +1159,9 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <input type="text" id="lookname" value="myfilm">
   <button class="sec" id="saveBtn">Save look</button>
 
+  <label>Save the film as</label>
+  <input type="text" id="outname" placeholder="(defaults to yourclip_film)">
+
   <div id="destrow" style="font-size:11px;color:var(--dim);margin:10px 0 2px">
     saves to: <span id="destpath" style="color:var(--tx)">—</span>
     <button class="sec" id="destBtn" style="width:auto;padding:3px 8px;margin:4px 0 0;font-size:11px">Save to…</button>
@@ -1208,6 +1218,7 @@ function settings(){
     input_log: $("input_log").value, lut: $("lut").value,
     print_stock: $("print_stock").value,
     grain_plate: $("grain_plate").value, codec: $("codec").value,
+    outname: $("outname").value,
     t: $("scrub").value
   };
 }
@@ -1608,7 +1619,19 @@ def run_ui(args) -> None:
         a.dry_run = False
         ext2 = ".mp4" if a.codec == "h264" else ".mov"
         outdir = cur["outdir"] or s.parent
-        out = outdir / (s.stem + "_film" + ext2)
+        # Output name: user-supplied (sanitized) or the default <name>_film.
+        raw = (q.get("outname") or "").strip()
+        if raw:
+            stem = Path(raw).stem  # drop any extension/path the user typed
+            stem = re.sub(r'[<>:"/\\|?*]', "_", stem) or (s.stem + "_film")
+        else:
+            stem = s.stem + "_film"
+        out = outdir / (stem + ext2)
+        # Don't silently overwrite: if it exists, append -2, -3, …
+        n = 2
+        while out.exists():
+            out = outdir / (f"{stem}-{n}" + ext2)
+            n += 1
         state.update(rendering=True, done=None, error=None, pct=0)
         try:
             res = render(s, out, a,
