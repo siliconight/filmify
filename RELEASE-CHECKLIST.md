@@ -35,6 +35,21 @@ display, and in some cases a GPU. Run through them before publishing a release.
       (`ffprobe -show_entries format_tags=comment <file>`)
 - [ ] The two README download links resolve to the current packages
 
+## Panel interactions (the click-level things CI can't reach)
+The smoke test confirms the panel *serves* and the server *class exists*, but
+it can't click anything. These wiring bugs have bitten before (slider help
+chips dead while dropdown ones worked, etc.), so click through them:
+- [ ] Click a **slider's** "?" (e.g. Grain) — popover appears with text
+- [ ] Click a **dropdown's** "?" (e.g. Look) — popover appears with text
+- [ ] Click a **checkbox's** "?" (e.g. 10-bit) — popover appears
+- [ ] Click elsewhere — the popover dismisses
+- [ ] Drag a slider — the live value readout updates AND the preview refreshes
+- [ ] Click a style **card** — sliders jump to that style's values
+- [ ] "Save look" then reload it from the dropdown — values come back
+- [ ] "Save to…" sets the destination; the "saves to:" line updates
+- [ ] After a render, "Show in folder" opens the right folder
+- [ ] Close the browser tab — the server shuts down within ~30s
+
 ## Publishing
 - [ ] `python test_filmify.py` is green locally
 - [ ] `python build-packages.py` run; `filmify-mac.zip` / `filmify-windows.zip` refreshed at repo root

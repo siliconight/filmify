@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.26.3"
+__version__ = "0.26.4"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1278,6 +1278,8 @@ const HELP = {
   vignette: "Gentle darkening toward the edges of the frame, like a real lens. Draws the eye inward.",
   curve: "The filmic tone curve \u2014 how shadows and highlights roll off. Film compresses highlights gracefully (no harsh clipping) and has a characteristic contrast shape.",
   depth: "10-bit processing keeps smoother gradients (skies, soft light) and survives further color grading better. Pair with ProRes/DNxHR. 8-bit is fine for quick delivery.",
+  depth10: "10-bit processing keeps smoother gradients (skies, soft light) and survives further color grading better. Pair with ProRes/DNxHR. 8-bit is fine for quick delivery.",
+  compare: "A/B split preview \u2014 shows the original on one side and the filmified result on the other, so you can judge the look against your source as you dial it in.",
   input_log: "If your camera shot in a flat 'Log' profile (S-Log3, V-Log, etc.), develop it to normal color first. Pick your camera's profile, or leave as Rec.709 for normal footage.",
   print_stock: "The color character of a film print stock, like choosing Kodak vs a warm or cool emulsion. A built-in 'graded through film' color engine. Your own .cube LUT overrides it.",
   lut: "Your own film-stock color LUT (.cube file). This is YOUR final color pick \u2014 it overrides filmify's built-in color so you stay in control of the grade.",
