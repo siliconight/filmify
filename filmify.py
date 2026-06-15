@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.29.1"
+__version__ = "0.30.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -349,6 +349,28 @@ LOOKS = {
         grain=9, plate_opacity=0.40, vignette="PI/7", warmth=0.10, chroma=1.0,
         presence=0.26,
         curve="0/0.015 0.15/0.13 0.35/0.34 0.5/0.52 0.72/0.77 0.92/0.915 1/0.95",
+    ),
+    # 1990s theatrical-drama look, modelled on the Spielberg / Janusz Kaminski
+    # signature of that era (Schindler's List, Amistad, Saving Private Ryan):
+    # a grounded STARTING POINT, not a literal match. The traits a post tool
+    # can actually deliver, and the values driving them:
+    #  - blown, blooming highlights around windows/practicals -> halation high
+    #    and triggered earlier (low threshold), the strongest single tell
+    #  - milky highlight rolloff, not hard digital clip -> compressed top
+    #    shoulder in the curve (1.0 -> 0.94) so brights cluster and bloom
+    #  - diffusion softness (Kaminski leaned on diffusion filters) -> soften up
+    #  - restrained, silvery palette with skin kept warm -> saturation down,
+    #    modest warmth (skin protection in the colour stage holds faces)
+    #  - print-stock midtone snap -> steep mids in the curve + presence
+    #  - fine 35mm grain (premium stock, big-budget) -> moderate grain
+    # NOTE: most of the Spielberg look is LIGHTING (backlight, haze, blown
+    # windows) that happens before filmify sees the frame. This leans footage
+    # toward that era; it cannot supply the lighting.
+    "nineties": dict(
+        soften=0.62, saturation=0.82, halation=0.46, halation_thresh=0.70,
+        grain=7, plate_opacity=0.40, vignette="PI/7", warmth=0.07, chroma=1.2,
+        presence=0.30,
+        curve="0/0.02 0.12/0.09 0.32/0.32 0.5/0.55 0.7/0.80 0.85/0.90 1/0.94",
     ),
 }
 
@@ -1168,7 +1190,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div class="fn">__FILENAME__</div>
 
   <label>Look (intensity)</label>
-  <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option></select>
+  <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option><option>nineties</option></select>
 
   <label>Gauge</label>
   <select id="gauge"><option>16mm</option><option selected>35mm</option><option>70mm</option></select>

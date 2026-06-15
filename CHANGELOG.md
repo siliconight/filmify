@@ -3,6 +3,22 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.30.0] — 2026-06-13
+
+### Added
+- A `nineties` look — selectable in the panel dropdown as a main preset, and
+  on the CLI (`--look nineties`). Modelled on the 1990s Spielberg / Janusz
+  Kaminski theatrical-drama signature: strong, early-triggered halation so
+  bright windows and practicals bloom; a compressed highlight shoulder so
+  brights go milky instead of clipping; diffusion softness; a restrained,
+  silvery palette with skin kept warm; print-stock midtone contrast; fine
+  35mm grain. Frame-verified by rendering a window+skin test and inspecting
+  the bloom, rolloff, and skin response. It's a grounded starting point, not
+  a literal match — most of the Spielberg look is lighting (backlight, haze,
+  blown windows) that happens before any post tool sees the frame; this leans
+  footage toward that era rather than conjuring it. Tune the halation slider
+  down if the bloom is too strong on a given clip.
+
 ## [0.29.1] — 2026-06-13
 
 ### Fixed
