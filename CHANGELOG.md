@@ -3,6 +3,26 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.25.0] — 2026-06-13
+
+The "dial it in, process the whole movie, walk away" release.
+
+### Added
+- **Batch a whole folder from the panel** — a "Process whole folder…" button
+  applies your exact current look to every video in a folder. Results land in
+  a new timestamped `filmify_YYYY-MM-DD_HHMM` folder next to the source, so
+  originals are never touched and every run is its own dated set. Set it and
+  walk away.
+- **Batch progress** — an overall bar plus "clip 7 of 43 — name (62%)", and a
+  Show-in-folder button when the whole batch finishes. You can leave and check
+  back to see exactly where it is.
+- **Shot-matching toggle** in the panel (was CLI-only): measures every clip
+  and nudges each toward a common exposure/white balance before the look, so
+  mixed cameras and lighting come out cohesive across the movie.
+- **Parameter help** — a "?" next to every control opens a plain-language
+  explanation in industry-standard terms (what halation is, what gauge means,
+  why you'd soften, etc.). Click anywhere to dismiss.
+
 ## [0.24.0] — 2026-06-13
 
 ### Added

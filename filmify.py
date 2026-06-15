@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1097,7 +1097,10 @@ h1{{font-weight:600;font-size:1.4rem;margin:0}}
 figure{{margin:0;flex:1;min-width:260px}}
 img{{width:100%;border-radius:6px;display:block}}
 figcaption{{color:#a89f90;font-size:.8rem;margin-top:.25rem;text-transform:uppercase;letter-spacing:.06em}}
-p{{color:#cfc7ba;margin:.5rem 0 0}}</style></head><body>
+p{{color:#cfc7ba;margin:.5rem 0 0}}#helppop{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.hq{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}.hq:hover{border-color:var(--acc);color:var(--acc)}
+</style></head><body>
+<div id="helppop"></div>
 <h1>filmify {e(__version__)} &mdash; {ok_n}/{len(results)} clip{"s" if len(results) != 1 else ""} processed</h1>
 <p class="meta">{e(when)} &middot; {e(summarize_settings(args))}</p>
 {"".join(cards)}</body></html>"""
@@ -1137,9 +1140,14 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 #dropzone.drag{border-color:var(--acc);background:#241c14}
 #progwrap{width:100%;height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:8px}
 #progfill{height:100%;width:0%;background:var(--acc);transition:width .3s ease}
+#batchwrap{width:100%;height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:6px}
+#batchfill{height:100%;width:0%;background:#6db86d;transition:width .3s ease}
 #gx{cursor:pointer;color:#a89f90;padding:0 4px}
 #rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
+#helppop{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.hq{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}.hq:hover{border-color:var(--acc);color:var(--acc)}
 </style></head><body>
+<div id="helppop"></div>
 <div id="side">
   <h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,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" width="22" height="22" style="border-radius:5px">filmify __VERSION__</h1>
   <div class="fn">__FILENAME__</div>
@@ -1221,6 +1229,15 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <button id="renderBtn">Render full clip</button>
   <div id="progwrap" hidden><div id="progfill"></div></div>
   <div id="status"></div>
+
+  <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+    <label style="display:flex;gap:6px;text-transform:none;font-size:12px;margin-bottom:8px">
+      <input type="checkbox" id="matchbox" checked> Match shots across clips (cohesive look)</label>
+    <button class="sec" id="batchBtn" style="background:var(--acc);color:#1a120a;font-weight:600">Process whole folder\u2026</button>
+    <div style="font-size:11px;color:var(--dim);margin-top:4px">Apply this exact look to every video in a folder. Walk away &mdash; results land in a new timestamped folder.</div>
+    <div id="batchstat" hidden style="margin-top:8px;font-size:12px;color:var(--tx)"></div>
+    <div id="batchwrap" hidden><div id="batchfill"></div></div>
+  </div>
 </div>
 <div id="main">
   <div id="import">
@@ -1240,6 +1257,74 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 </div>
 <script>
 const $ = id => document.getElementById(id);
+const HELP = {
+  look: "Overall strength of the film treatment. 'Subtle' is a light, modern finish; 'standard' is clearly filmic; 'heavy' is a vintage, well-worn stock. Think of it as the master intensity dial.",
+  gauge: "The film format. 16mm is grainier and softer (documentary / indie). 35mm is the Hollywood standard. 70mm is large-format: extremely fine grain, very clean (epics like 2001 or Dunkirk).",
+  ratio: "Aspect ratio \u2014 the shape of the frame. 2.39 is modern widescreen 'Scope'; 2.2 is 70mm; 2.76 is Ultra Panavision (very wide); 1.85 is standard theatrical 'flat'. Crops your footage to that cinematic shape.",
+  grain: "Film grain \u2014 the fine, organic texture of photographic emulsion. Real film grain is random and lively, unlike flat digital noise. Higher = more visible texture.",
+  halation: "The soft red-orange glow that blooms around bright highlights on film, caused by light scattering back through the emulsion. Subtle halation is a signature 'this was shot on film' tell.",
+  soften: "Reduces digital over-sharpness. Real lenses and film resolve slightly softer than a digital sensor's razor edges. A little softening reads as 'cinematic'; a lot reads as dreamy/diffused.",
+  saturation: "Color intensity. Film tends toward restrained, believable color rather than punchy digital saturation. Below 1.0 mutes color; skin tones are protected so faces stay alive.",
+  chroma_soften: "Blurs only the color (not the detail). Film's color layers resolve softer than its brightness, so slight chroma softening looks natural and hides digital color noise.",
+  weave: "Gate weave \u2014 the tiny, slow side-to-side drift of the image as film moves through a projector or camera gate. A small amount adds subconscious 'mechanical film' feel.",
+  leak: "Light leak \u2014 a warm flash of color from light sneaking into the film body, common in old or hand-loaded cameras. Intermittent and vintage; off by default.",
+  flare: "Anamorphic flare \u2014 the long horizontal blue streak that anamorphic lenses throw off bright lights. The classic blockbuster / sci-fi lens look.",
+  presence: "Mid-frequency local contrast. Counteracts the flat, 'gray veneer' look of digital by adding depth and texture pop \u2014 without the harsh edges of sharpening.",
+  flicker: "Density flicker \u2014 the subtle frame-to-frame brightness variation of real film exposure. Steady-as-a-rock brightness is a digital giveaway; a touch of flicker breathes.",
+  corner_soften: "Field curvature \u2014 vintage lenses are sharp in the center and softer toward the corners. Gently guides the eye to the middle and reads as 'old glass'.",
+  age: "Print damage \u2014 dust specks and the occasional drifting vertical scratch, like a well-worn projection print. Strictly for a deliberately aged look.",
+  bw: "Black & white, using a panchromatic film mix (the way B&W film responds to color) rather than a flat desaturate.",
+  conform: "Cadence \u2014 conform to 24 fps with a 180\u00b0 shutter motion blur, the standard 'film motion' feel, instead of smooth 30/60 fps 'video motion'.",
+  vignette: "Gentle darkening toward the edges of the frame, like a real lens. Draws the eye inward.",
+  curve: "The filmic tone curve \u2014 how shadows and highlights roll off. Film compresses highlights gracefully (no harsh clipping) and has a characteristic contrast shape.",
+  depth: "10-bit processing keeps smoother gradients (skies, soft light) and survives further color grading better. Pair with ProRes/DNxHR. 8-bit is fine for quick delivery.",
+  input_log: "If your camera shot in a flat 'Log' profile (S-Log3, V-Log, etc.), develop it to normal color first. Pick your camera's profile, or leave as Rec.709 for normal footage.",
+  print_stock: "The color character of a film print stock, like choosing Kodak vs a warm or cool emulsion. A built-in 'graded through film' color engine. Your own .cube LUT overrides it.",
+  lut: "Your own film-stock color LUT (.cube file). This is YOUR final color pick \u2014 it overrides filmify's built-in color so you stay in control of the grade.",
+  grain_plate: "Use a real scanned film-grain video instead of synthesized grain, for maximum authenticity. Optional path to a grain plate clip.",
+  codec: "Output format. H.264 = small, ready to share. ProRes / DNxHR = high-quality 'mezzanine' formats for editing in Premiere, Resolve, or Final Cut.",
+  match: "Shot matching \u2014 before applying the look, gently nudge every clip toward a common exposure and white balance so mixed cameras and lighting come out cohesive."
+};
+function showHelp(key, x, y){
+  const pop = document.getElementById("helppop");
+  pop.textContent = HELP[key] || "";
+  pop.style.display = "block";
+  const w = 300;
+  pop.style.left = Math.max(8, Math.min(x, window.innerWidth - w - 8)) + "px";
+  pop.style.top = (y + 16) + "px";
+}
+function hideHelp(){ document.getElementById("helppop").style.display = "none"; }
+document.addEventListener("click", e => {
+  if (e.target.classList && e.target.classList.contains("hq")) {
+    e.stopPropagation();
+    showHelp(e.target.dataset.k, e.pageX, e.pageY);
+  } else if (e.target.id !== "helppop") { hideHelp(); }
+});
+// add a "?" chip to every label that has a matching control id
+window.addEventListener("DOMContentLoaded", () => {
+  const map = {"look":"Look","gauge":"Gauge","ratio":"Aspect ratio","grain":"Grain",
+    "halation":"Halation","soften":"Soften","saturation":"Saturation",
+    "chroma_soften":"Chroma","weave":"Gate weave","leak":"Light leak","flare":"Anamorphic flare",
+    "presence":"Presence","flicker":"Density flicker","corner_soften":"Corner softness",
+    "age":"Aged print","input_log":"log","print_stock":"Print stock","lut":"LUT",
+    "grain_plate":"Grain plate","codec":"Codec","depth":"10-bit"};
+  document.querySelectorAll("#side label").forEach(lab => {
+    const ctrl = lab.querySelector("input,select") ||
+      (lab.nextElementSibling && /input|select/i.test(lab.nextElementSibling.tagName) ? lab.nextElementSibling : null);
+    let key = null;
+    if (ctrl && map[ctrl.id]) key = ctrl.id;
+    else {
+      const t = lab.textContent.toLowerCase();
+      for (const k in HELP){ if (t.includes(k.replace("_"," ")) ) { key = k; break; } }
+    }
+    if (key && HELP[key] && !lab.querySelector(".hq")) {
+      const q = document.createElement("span");
+      q.className = "hq"; q.dataset.k = key; q.textContent = "?";
+      lab.appendChild(q);
+    }
+  });
+});
+
 const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare","presence","flicker","corner_soften","age"];
 const styles = __STYLES_JSON__;
 const looks = __LOOKS_JSON__;
@@ -1435,6 +1520,30 @@ $("destBtn").onclick = async () => {
   if (r.ok){ $("destpath").textContent = r.dir; }
 };
 $("revealBtn").onclick = () => { fetch("/reveal").catch(()=>{}); };
+$("batchBtn").onclick = async () => {
+  const body = settings();
+  body.match = $("matchbox").checked;
+  body.folder = "";
+  const r = await (await fetch("/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
+  if (!r.ok) { if(!r.cancel) $("batchstat").textContent = "couldn't start"; return; }
+  $("batchstat").hidden = false; $("batchwrap").hidden = false;
+  $("batchBtn").disabled = true; $("renderBtn").disabled = true;
+  const poll = setInterval(async () => {
+    const s = await (await fetch("/status")).json();
+    if (s.batch && s.rendering) {
+      const overall = s.b_total ? Math.round((s.b_done + (s.pct||0)/100) / s.b_total * 100) : 0;
+      $("batchfill").style.width = overall + "%";
+      $("batchstat").textContent = "clip " + (s.b_done+1) + " of " + s.b_total + " \u2014 " + (s.b_name||"") + " (" + (s.pct||0) + "%)";
+    } else if (s.batch && !s.rendering) {
+      clearInterval(poll);
+      $("batchfill").style.width = "100%";
+      $("batchBtn").disabled = false; $("renderBtn").disabled = false;
+      $("batchstat").innerHTML = "\u2713 " + (s.b_name||"done") + " \u2014 saved to a new folder &nbsp;<button id=\'brev\' style=\'width:auto;padding:3px 10px;font-size:11px\'>Show in folder</button>";
+      const b = document.getElementById("brev");
+      if (b) b.onclick = () => { fetch("/reveal").catch(()=>{}); };
+    }
+  }, 800);
+};
 
 if (HAS_CLIP_INIT) showEditor(); else showImport();
 setInterval(() => { fetch("/alive").catch(()=>{}); }, 8000);
@@ -1507,7 +1616,9 @@ def run_ui(args) -> None:
 
     src = args.input   # may be None: panel opens in import state
     cur = {"src": src, "info": probe(src) if src else None, "outdir": None}
-    state = {"rendering": False, "done": None, "error": None, "pct": 0}
+    state = {"rendering": False, "done": None, "error": None, "pct": 0,
+             "batch": False, "b_total": 0, "b_done": 0, "b_name": "",
+             "b_outdir": None}
 
     def pick_file_dialog():
         """Open the OS-native file picker and return a path, or '' on cancel.
@@ -1695,7 +1806,70 @@ def run_ui(args) -> None:
         except Exception as exc:  # noqa: BLE001 — surface anything to the panel
             state.update(rendering=False, error=str(exc))
 
-    class Handler(http.server.BaseHTTPRequestHandler):
+    VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm", ".mts",
+                  ".m2ts", ".wmv", ".flv", ".mpg", ".mpeg"}
+
+    def do_batch(q, folder):
+        """Process every video in a folder with the current look, into a
+        timestamped filmify_<when> subfolder. Set-it-and-walk-away."""
+        a = _ui_args(args, q)
+        _ui_loglut(a)
+        a.compare = False
+        a.preview = None
+        a.dry_run = False
+        do_match = str(q.get("match")) in ("true", "True", "1")
+        src_dir = Path(folder)
+        files = sorted(f for f in src_dir.iterdir()
+                       if f.is_file() and f.suffix.lower() in VIDEO_EXTS
+                       and "filmify_" not in f.parent.name)
+        if not files:
+            state.update(rendering=False, error="no videos found in that folder")
+            return
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+        outdir = src_dir / f"filmify_{stamp}"
+        try:
+            outdir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            state.update(rendering=False, error=str(exc))
+            return
+        ext2 = ".mp4" if a.codec == "h264" else ".mov"
+
+        # Shot matching: measure all clips, nudge each toward the batch median
+        nudges = {}
+        if do_match and len(files) > 1:
+            stats = {}
+            for f in files:
+                state.update(b_name=f"measuring {f.name}")
+                m = measure_clip(f)
+                if m:
+                    stats[f] = m
+            if len(stats) > 1:
+                med = tuple(sorted(v[i] for v in stats.values())[len(stats) // 2]
+                            for i in range(3))
+                clamp = lambda x, c: max(-c, min(c, x))
+                for f, (y, u, v) in stats.items():
+                    nudges[f] = (clamp((med[0] - y) / 255.0 * 0.7, 0.10),
+                                 clamp((med[2] - v) / 255.0 * 1.1, 0.08),
+                                 clamp((med[1] - u) / 255.0 * 1.1, 0.08))
+
+        state.update(rendering=True, done=None, error=None, pct=0,
+                     batch=True, b_total=len(files), b_done=0,
+                     b_outdir=str(outdir))
+        ok = 0
+        for i, f in enumerate(files):
+            state.update(b_name=f.name, b_done=i, pct=0)
+            a._match = nudges.get(f)
+            out = outdir / (f.stem + "_film" + ext2)
+            try:
+                res = render(f, out, a,
+                             progress_cb=lambda p: state.update(pct=p))
+                if res["ok"]:
+                    ok += 1
+            except Exception:  # noqa: BLE001 — keep going; one bad clip≠stop
+                pass
+        state.update(rendering=False, batch=True, b_done=len(files),
+                     pct=100, done=str(outdir),
+                     b_name=f"{ok} of {len(files)} clips done")
         def log_message(self, *_):
             pass
 
@@ -1801,6 +1975,19 @@ def run_ui(args) -> None:
                     threading.Thread(target=do_render, args=(q,),
                                      daemon=True).start()
                 self._send(200, "application/json", b'{"ok": true}')
+            elif self.path == "/batch":
+                if state["rendering"]:
+                    self._send(200, "application/json", b'{"ok": false}')
+                    return
+                folder = (q.get("folder") or "").strip() or pick_folder_dialog()
+                if not folder or not Path(folder).is_dir():
+                    self._send(200, "application/json",
+                               b'{"ok": false, "cancel": true}')
+                    return
+                threading.Thread(target=do_batch, args=(q, folder),
+                                 daemon=True).start()
+                self._send(200, "application/json", _json.dumps(
+                    {"ok": True, "folder": folder}).encode())
             elif self.path == "/setdest":
                 p = (q.get("path") or "").strip() or pick_folder_dialog()
                 if p and Path(p).is_dir():
