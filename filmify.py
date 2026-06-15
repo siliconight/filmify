@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.29.0"
+__version__ = "0.29.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1256,10 +1256,10 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 </div>
 <div id="main">
   <div id="import">
-    <div id="dropzone">
+    <div id="dropzone" style="cursor:pointer">
       <div style="font-size:42px;margin-bottom:8px">&#127909;</div>
-      <div style="font-size:16px;color:var(--tx);margin-bottom:4px">Drop a video here</div>
-      <div style="font-size:13px;margin-bottom:16px">or</div>
+      <div style="font-size:16px;color:var(--tx);margin-bottom:4px">Drop a video here, or click to browse</div>
+      <div style="font-size:13px;margin-bottom:16px">&nbsp;</div>
       <button id="chooseBtn" style="width:auto;padding:9px 20px">Choose a video…</button>
       <div id="importmsg" style="margin-top:12px;font-size:12px;min-height:1em"></div>
     </div>
@@ -1538,14 +1538,18 @@ async function loadPath(path){
     else { $("importmsg").textContent = r.error || "couldn't load that file"; }
   } catch(e){ $("importmsg").textContent = "load failed"; }
 }
-$("chooseBtn").onclick = () => loadPath("");   // server opens the native picker
+$("chooseBtn").onclick = (e) => { e.stopPropagation(); loadPath(""); };   // server opens the native picker
 const dz = $("dropzone");
 ["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, e => {e.preventDefault(); dz.classList.add("drag");}));
 ["dragleave","drop"].forEach(ev => dz.addEventListener(ev, e => {e.preventDefault(); dz.classList.remove("drag");}));
 dz.addEventListener("drop", e => {
-  const f = e.dataTransfer.files[0];
-  if (f && f.path) loadPath(f.path); else loadPath("");  // fall back to picker
+  // A browser never exposes a dropped file's real disk path (security), and
+  // the server needs a real path to process it — so a drop can't load the
+  // file directly. Instead we treat a drop as a shortcut to the picker,
+  // opened to a sensible place. Honest and always reliable.
+  loadPath("");
 });
+dz.addEventListener("click", () => loadPath(""));
 
 async function refreshDest(){
   try { const r = await (await fetch("/destdir")).json();

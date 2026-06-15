@@ -3,6 +3,19 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.29.1] — 2026-06-13
+
+### Fixed
+- **Dragging a video onto the import zone did nothing useful** — it opened the
+  file picker instead of loading the dropped file. The drop handler read the
+  dropped file's disk path, but browsers never expose that (security), so the
+  check always failed and fell through to the picker. Since the server needs a
+  real path to process the file (and a browser won't give one), a drop now
+  honestly *is* a shortcut to the picker — and the zone says "Drop a video
+  here, or click to browse" so the behavior matches the label. The whole zone
+  is clickable too. Verified in a real browser (drop and click each open the
+  picker exactly once, no double-fire).
+
 ## [0.29.0] — 2026-06-13
 
 ### Added

@@ -99,6 +99,27 @@ def main():
             c.click()
             check("checkbox chip opens the popover", shown())
 
+        # Import drop zone: a browser can't expose a dropped file's path, so a
+        # drop (and a click) must open the picker exactly once — not silently
+        # do nothing, not double-fire. (Regression: drop used to read f.path,
+        # always undefined, so it fell through confusingly.)
+        pg.evaluate("""() => {
+          window.__loadCalls = [];
+          window.loadPath = (path) => window.__loadCalls.push(path === '' ? 'PICKER' : path);
+        }""")
+        pg.evaluate("""() => {
+          const dz = document.getElementById('dropzone');
+          const dt = new DataTransfer();
+          dt.items.add(new File(['x'],'movie.mp4',{type:'video/mp4'}));
+          dz.dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true}));
+        }""")
+        check("dropping a file opens the picker once",
+              pg.evaluate("() => window.__loadCalls.slice()") == ["PICKER"])
+        pg.evaluate("() => window.__loadCalls = []")
+        pg.eval_on_selector("#chooseBtn", "el => el.click()")
+        check("Choose button opens the picker once (no double-fire)",
+              pg.evaluate("() => window.__loadCalls.slice()") == ["PICKER"])
+
         browser.close()
 
     print(f"\n{'all green' if not fails else 'FAILED: ' + ', '.join(fails)}")
