@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -334,6 +334,21 @@ LOOKS = {
         grain=11, plate_opacity=0.55, vignette="PI/5", warmth=0.09, chroma=1.8,
         presence=0.34,
         curve="0/0.03 0.12/0.115 0.3/0.3 0.55/0.62 0.8/0.85 1/0.945",
+    ),
+    # Kodak VISION 500T (5279)-style tungsten negative — the early-Sopranos
+    # base. Documented traits driving each value (Kodak/ASC data):
+    #  - tungsten 3200K balance -> warm bias (warmth high)
+    #  - "flesh-to-neutral reproduction" -> restrained saturation, skin kept
+    #  - "clean white highlights", linear curve, wide latitude -> gentle
+    #    shoulder, no hard clip
+    #  - grain heaviest in the blue/yellow layer -> coarser grain, blue lean
+    #    is applied in the grain stage; here we set overall grain a touch up
+    #  - moderate halation around tungsten practicals
+    "vision-500t": dict(
+        soften=0.45, saturation=0.85, halation=0.30, halation_thresh=0.80,
+        grain=9, plate_opacity=0.40, vignette="PI/7", warmth=0.10, chroma=1.0,
+        presence=0.26,
+        curve="0/0.015 0.15/0.13 0.35/0.34 0.5/0.52 0.72/0.77 0.92/0.915 1/0.95",
     ),
 }
 

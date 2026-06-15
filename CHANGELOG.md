@@ -3,6 +3,53 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.29.0] — 2026-06-13
+
+### Added
+- A `vision-500t` look (CLI: `--look vision-500t`) — a tungsten-negative
+  starting point modelled on documented Kodak VISION 500T characteristics
+  (warm 3200K balance, restrained flesh-to-neutral saturation, clean highlight
+  rolloff, slightly coarser grain, moderate halation). Verified by rendering a
+  highlight+skin test frame and inspecting it. NOT in the panel dropdown yet —
+  CLI-only for testing before committing the UI to stock presets. A grounded
+  starting point, not a "Sopranos button": stock is only part of that look,
+  lighting and lensing (which no post tool supplies) are the rest.
+
+## [0.28.0] — 2026-06-13
+
+### Added
+- `sweep.py`: renders one clip across a parameter's range (off / DEFAULT /
+  heavy) into `sweep_<param>/`, default marked in the filename — the visual
+  artifact for judging whether a starting point is close enough and for
+  showing testers.
+
+### Verified (no code change)
+- Log curves audited against manufacturer specs: S-Log3 matches Sony's
+  Technical Summary (18% gray to code 420); V-Log matches Panasonic's
+  Reference Manual constants. Both confirmed by round-trip math.
+- Halation default audited against documented film optics: red-orange tint,
+  highlight-threshold trigger, soft bloom, conservative intensity all match.
+
+## [0.27.1] — 2026-06-13
+
+### Fixed
+- Help "?" chips on sliders and checkboxes now actually work (verified in a
+  real browser). The chip opened the popover, then the same click bubbled to
+  the document dismiss handler and closed it instantly. The chip now stops its
+  own click. Two earlier attempts fixed chip creation, which was never broken.
+
+### Added
+- `test_panel_ui.py`: a headless-browser (Playwright) test that clicks each
+  help chip and asserts the popover opens, dismisses, and switches. Wired into
+  CI so a machine clicks the buttons on every push.
+
+## [0.27.0] — 2026-06-13
+
+### Added
+- Windows now auto-installs Python (official python.org per-user installer,
+  consent flow mirroring FFmpeg). Both platforms now fully self-bootstrap from
+  the zip: download, double-click, everything else automatic.
+
 ## [0.26.0] — 2026-06-13
 
 ### Added
