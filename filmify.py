@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.26.2"
+__version__ = "0.26.3"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1300,30 +1300,39 @@ document.addEventListener("click", e => {
     showHelp(e.target.dataset.k, e.pageX, e.pageY);
   } else if (e.target.id !== "helppop") { hideHelp(); }
 });
-// add a "?" chip to every label that has a matching control id
-window.addEventListener("DOMContentLoaded", () => {
-  const map = {"look":"Look","gauge":"Gauge","ratio":"Aspect ratio","grain":"Grain",
-    "halation":"Halation","soften":"Soften","saturation":"Saturation",
-    "chroma_soften":"Chroma","weave":"Gate weave","leak":"Light leak","flare":"Anamorphic flare",
-    "presence":"Presence","flicker":"Density flicker","corner_soften":"Corner softness",
-    "age":"Aged print","input_log":"log","print_stock":"Print stock","lut":"LUT",
-    "grain_plate":"Grain plate","codec":"Codec","depth":"10-bit"};
+// add a "?" chip to every label whose following control (or own text) maps
+// to a help entry. Runs immediately since this script is at end of body.
+(function attachHelpChips(){
   document.querySelectorAll("#side label").forEach(lab => {
-    const ctrl = lab.querySelector("input,select") ||
-      (lab.nextElementSibling && /input|select/i.test(lab.nextElementSibling.tagName) ? lab.nextElementSibling : null);
-    let key = null;
-    if (ctrl && map[ctrl.id]) key = ctrl.id;
-    else {
-      const t = lab.textContent.toLowerCase();
-      for (const k in HELP){ if (t.includes(k.replace("_"," ")) ) { key = k; break; } }
+    if (lab.querySelector(".hq")) return;
+    // the control this label describes: one inside it, or the next element
+    let ctrl = lab.querySelector("input,select");
+    let sib = lab.nextElementSibling;
+    while (!ctrl && sib) {
+      if (/input|select/i.test(sib.tagName)) { ctrl = sib; break; }
+      if (sib.tagName === "LABEL") break;  // next label = different control
+      sib = sib.nextElementSibling;
     }
-    if (key && HELP[key] && !lab.querySelector(".hq")) {
+    let key = null;
+    if (ctrl && ctrl.id && HELP[ctrl.id]) {
+      key = ctrl.id;
+    } else {
+      // fall back to longest-matching help key in the label text, so
+      // "chroma soften" matches chroma_soften, not soften
+      const t = lab.textContent.toLowerCase();
+      let best = "";
+      for (const k in HELP) {
+        const phrase = k.replace(/_/g, " ");
+        if (t.includes(phrase) && phrase.length > best.length) { key = k; best = phrase; }
+      }
+    }
+    if (key && HELP[key]) {
       const q = document.createElement("span");
       q.className = "hq"; q.dataset.k = key; q.textContent = "?";
       lab.appendChild(q);
     }
   });
-});
+})();
 
 const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare","presence","flicker","corner_soften","age"];
 const styles = __STYLES_JSON__;
