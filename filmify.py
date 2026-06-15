@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.30.0"
+__version__ = "0.30.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -81,6 +81,11 @@ STYLES = {
     "newsreel":    {"look": "heavy", "bw": True, "gauge": "16mm",
                     "weave": 1.5, "ratio": 1.33,
                     "flicker": 0.5, "age": 0.55},
+    # 1990s theatrical-drama aesthetic (Spielberg/Kaminski-inspired). The tone
+    # package lives in the "nineties" base LOOK (custom curve + warmth, which
+    # styles can't carry); this style is the gallery front door for it, plus a
+    # subtle gate weave for 90s mechanical-35mm life.
+    "nineties":    {"look": "nineties", "weave": 1.0},
 }
 
 
@@ -1190,7 +1195,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div class="fn">__FILENAME__</div>
 
   <label>Look (intensity)</label>
-  <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option><option>nineties</option></select>
+  <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option><option value="nineties" hidden>nineties</option></select>
 
   <label>Gauge</label>
   <select id="gauge"><option>16mm</option><option selected>35mm</option><option>70mm</option></select>

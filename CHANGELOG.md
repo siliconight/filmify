@@ -3,6 +3,20 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.30.1] — 2026-06-13
+
+### Changed
+- Moved the `nineties` preset out of the LOOK (INTENSITY) dropdown and into
+  the Styles gallery, where era/aesthetic presets belong. The dropdown is
+  once again a clean intensity ladder (subtle / standard / heavy) and the
+  gallery is the front door for the 1990s look — a more prominent home with
+  a live thumbnail on your own footage. Mechanically `nineties` stays a base
+  look (it carries a custom tone curve and warmth, which styles can't hold);
+  it's now hidden from the dropdown but still selectable by the style and via
+  `--look nineties` on the CLI. The style also adds a gentle gate weave for
+  90s mechanical-35mm life. Browser-verified (Playwright): gallery tile
+  present, dropdown clean, clicking the tile resolves to the nineties look.
+
 ## [0.30.0] — 2026-06-13
 
 ### Added
