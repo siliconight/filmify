@@ -3,6 +3,26 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.24.0] — 2026-06-13
+
+### Added
+- Hardware-accelerated H.264 encoding: filmify now detects and uses a GPU
+  encoder when one is actually present — NVENC or Quick Sync on Windows,
+  VideoToolbox on Mac — for much faster full renders on long clips. Detection
+  is a real 1-frame probe-encode (an encoder being listed doesn't mean the
+  machine can run it), cached per session, with automatic fallback to
+  software libx264. `--no-hwaccel` forces software. Prints "encode: hardware
+  (…)" when active.
+- Software encodes now pass `-threads 0` so libx264 uses all cores.
+
+### Why not a full rewrite (C++/C#)?
+- filmify is an orchestrator: FFmpeg (optimized C with SIMD) does ~all the
+  actual pixel work. Rewriting the thin Python layer around it would speed up
+  the part that isn't the bottleneck while sacrificing the single-file,
+  zero-build, runs-anywhere property and reintroducing the signing/distribution
+  walls we worked around. The real speed levers are encoder choice and
+  settings — addressed here — not the host language.
+
 ## [0.23.2] — 2026-06-13
 
 ### Added

@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.23.2"
+__version__ = "0.24.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -884,6 +884,38 @@ def fmt_size(n: float) -> str:
     return f"{n:.1f} GB"
 
 
+_HW_ENCODER = "unset"
+
+
+def detect_hw_encoder():
+    """Return the name of a working hardware H.264 encoder for this machine,
+    or None. An encoder being *listed* doesn't mean it *works* (no GPU, no
+    driver), so we actually try a 1-frame encode and cache the result."""
+    global _HW_ENCODER
+    if _HW_ENCODER != "unset":
+        return _HW_ENCODER
+    if sys.platform == "darwin":
+        candidates = ["h264_videotoolbox"]
+    elif os.name == "nt":
+        candidates = ["h264_nvenc", "h264_qsv", "h264_amf"]
+    else:
+        candidates = ["h264_nvenc", "h264_qsv", "h264_vaapi"]
+    listed = subprocess.run([FFMPEG, "-hide_banner", "-encoders"],
+                            capture_output=True, text=True).stdout
+    _HW_ENCODER = None
+    for enc in candidates:
+        if f" {enc}" not in listed:
+            continue
+        probe = run([FFMPEG, "-hide_banner", "-loglevel", "error",
+                     "-f", "lavfi", "-i", "testsrc2=s=128x128:d=0.1",
+                     "-c:v", enc, "-frames:v", "1", "-f", "null", "-"],
+                    capture_output=True)
+        if probe.returncode == 0:
+            _HW_ENCODER = enc
+            break
+    return _HW_ENCODER
+
+
 def render(src: Path, out: Path, args, progress_cb=None) -> dict:
     """Build and run the ffmpeg command for one file. Returns a result
     record for the report; failures are recorded so a batch can continue.
@@ -929,10 +961,29 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
             cmd += ["-c:v", "dnxhd", "-profile:v", "dnxhr_hq",
                     "-pix_fmt", "yuv422p", "-c:a", "pcm_s16le"]
     else:
-        # h264 — delivery codec; fine for a finish pass, poor for editing
-        cmd += ["-c:v", "libx264",
-                "-preset", "fast" if args.preview else "slow",
-                "-crf", str(args.crf), "-tune", "grain", "-c:a", "copy"]
+        # h264 — delivery codec; fine for a finish pass, poor for editing.
+        # Use a hardware encoder when one is actually available (much faster
+        # on long clips); otherwise libx264 tuned for grain retention.
+        if not args.no_hwaccel and not args.preview:
+            hw = detect_hw_encoder()
+        else:
+            hw = None
+        if hw == "h264_nvenc":
+            cmd += ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr",
+                    "-cq", str(args.crf), "-c:a", "copy"]
+        elif hw == "h264_videotoolbox":
+            cmd += ["-c:v", "h264_videotoolbox", "-q:v",
+                    str(max(1, min(100, 100 - args.crf * 3))), "-c:a", "copy"]
+        elif hw == "h264_qsv":
+            cmd += ["-c:v", "h264_qsv", "-global_quality", str(args.crf),
+                    "-c:a", "copy"]
+        else:
+            cmd += ["-c:v", "libx264",
+                    "-preset", "fast" if args.preview else "slow",
+                    "-crf", str(args.crf), "-tune", "grain",
+                    "-threads", "0", "-c:a", "copy"]
+        if hw:
+            print(f"encode: hardware ({hw})")
     cmd += ["-metadata",
             f"comment=processed with filmify {__version__} | "
             f"{summarize_settings(args)}"]
@@ -1419,6 +1470,7 @@ def _ui_args(base, q):
     a.grain_plate = Path(q["grain_plate"]) if q.get("grain_plate") else None
     a.plate_opacity = None
     a.print_stock = q.get("print_stock") or None
+    a.no_hwaccel = False
     a.presence = float(q["presence"]) if q.get("presence") not in (None, "") else None
     a.flicker = fl("flicker")
     a.corner_soften = fl("corner_soften")
@@ -1915,6 +1967,9 @@ def main() -> None:
                          "gently toward the batch median exposure and white "
                          "balance before applying the look — mixed cameras "
                          "come out at the same level, not just the same look")
+    ap.add_argument("--no-hwaccel", action="store_true",
+                    help="disable hardware-accelerated H.264 encoding even if "
+                         "a GPU encoder is available (use software libx264)")
     ap.add_argument("--no-tonemap", action="store_true",
                     help="don't auto tone-map HDR (HLG/PQ) sources to Rec.709")
     ap.add_argument("--force", action="store_true",
