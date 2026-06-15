@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-build-packages.py — assemble the clean, user-facing filmify downloads.
+build-packages.py -- assemble the clean, user-facing filmify downloads.
 
 Produces two zips in dist/:
   filmify-mac.zip      → unzips to a folder showing just "Start filmify"
@@ -32,24 +32,24 @@ MAC_HIDDEN = ["filmify-launch.sh", "make-mac-app.command",
 WIN_HIDDEN = ["filmify-quiet.vbs", "Make filmify app.bat",
               "filmify.ico", "filmify_icon_1024.png"]
 
-MAC_README = """filmify — the feel of film, without the film camera.
+MAC_README = """filmify -- the feel of film, without the film camera.
 
 TO START:
   Double-click  "Start filmify"
 
   The very first time, macOS may say it's from an unidentified developer.
-  If so: right-click "Start filmify" -> Open -> Open. (Just once — after
+  If so: right-click "Start filmify" -> Open -> Open. (Just once -- after
   that a normal double-click works.)
 
 That's it. filmify opens in your web browser. Drop in a video, pick a look,
 and render. Your finished file has a "Show in folder" button so you always
 know where it went.
 
-Everything else lives in the "app-files" folder — you can ignore it.
+Everything else lives in the "app-files" folder -- you can ignore it.
 Keep this whole folder together; don't move "Start filmify" out on its own.
 """
 
-WIN_README = """filmify — the feel of film, without the film camera.
+WIN_README = """filmify -- the feel of film, without the film camera.
 
 TO START:
   Double-click  "Start filmify"
@@ -61,21 +61,23 @@ That's it. filmify opens in your web browser. Drop in a video, pick a look,
 and render. Your finished file has a "Show in folder" button so you always
 know where it went.
 
-Everything else lives in the "app-files" folder — you can ignore it.
+Everything else lives in the "app-files" folder -- you can ignore it.
 Keep this whole folder together; don't move "Start filmify" out on its own.
 """
 
 # The one visible launcher. It just calls into app-files/, so the top level
 # stays clean. Mac version:
 MAC_START = """#!/bin/bash
-# Start filmify — double-click me.
+# Start filmify -- double-click me.
 cd "$(dirname "$0")/app-files" || exit 1
 exec /bin/bash ./filmify-launch.sh
 """
 
-# Windows version (CRLF):
+# Windows version (CRLF). Uses 'call' so START-HERE runs in this same console
+# window (which stays open as the panel's signal). Pure ASCII -- a stray
+# non-ASCII byte in a .bat can break parsing on some Windows codepages.
 WIN_START = """@echo off
-rem Start filmify — double-click me.
+rem Start filmify -- double-click me.
 cd /d "%~dp0app-files"
 call "START-HERE-WINDOWS.bat" --quiet
 """

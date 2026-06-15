@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem START HERE (Windows) — double-click me.
+rem START HERE (Windows) -- double-click me.
 rem First run: I set up FFmpeg if needed (with your OK), then a file picker
 rem appears. Pick a clip to open the filmify control panel, or run me with a
 rem folder dragged onto my icon to batch-preview a whole shoot.
@@ -61,26 +61,32 @@ if defined NEEDFF (
 )
 
 rem ---- Launch ------------------------------------------------------------------
-rem Panel-first: open straight to the import panel. The user picks or drops
-rem a clip from inside it (matches the Mac flow). A dragged file/folder still
-rem works as a shortcut.
+rem Panel-first: open straight to the import panel. Keep a visible window so
+rem the user always has a signal it's running and can read any error.
 set "PICK=%~1"
 if "%PICK%"=="--quiet" set "PICK="
 
-if defined PICK (
-  if exist "%PICK%\" (
-    rem Folder dragged on: batch a fast split-screen preview
-    %PY% "%SCRIPT%" "%PICK%" --compare --preview
-    echo.
-    pause
-    exit /b 0
-  )
+if defined PICK if exist "%PICK%\" (
+  rem Folder dragged on: batch a fast split-screen preview
+  %PY% "%SCRIPT%" "%PICK%" --compare --preview
+  echo.
+  pause
+  exit /b 0
 )
 
-rem Open the panel windowless (pythonw); the browser is the whole UI.
+echo.
+echo   Starting filmify... your web browser will open in a moment.
+echo   Keep this window open while you work. Close it when you're done.
+echo.
 if defined PICK (
-  where pythonw >nul 2>nul && (start "" pythonw "%SCRIPT%" "%PICK%" --ui) || (start "" %PY% "%SCRIPT%" "%PICK%" --ui)
+  %PY% "%SCRIPT%" "%PICK%" --ui
 ) else (
-  where pythonw >nul 2>nul && (start "" pythonw "%SCRIPT%" --ui) || (start "" %PY% "%SCRIPT%" --ui)
+  %PY% "%SCRIPT%" --ui
+)
+if not %errorlevel%==0 (
+  echo.
+  echo   filmify stopped unexpectedly. The message above explains why.
+  echo.
+  pause
 )
 exit /b 0

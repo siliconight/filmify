@@ -1,11 +1,11 @@
 @echo off
 setlocal
-rem Make filmify app — run me ONCE. I create a "filmify" shortcut with the
+rem Make filmify app -- run me ONCE. I create a "filmify" shortcut with the
 rem app icon on your Desktop and in your Start menu, so from now on you just
 rem click the filmify icon like any other program. No console, no typing.
 rem
 rem (Windows may show "Windows protected your PC" the first time you run a
-rem downloaded file. That's SmartScreen being cautious — click "More info"
+rem downloaded file. That's SmartScreen being cautious -- click "More info"
 rem then "Run anyway". It only happens once.)
 
 set "HERE=%~dp0"
