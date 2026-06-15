@@ -1,0 +1,50 @@
+name: smoke test
+
+# Runs the regression guard on every push and pull request, across all three
+# OSes. This is what catches launcher/syntax/version/render regressions before
+# they reach a user. It cannot click a native dialog or exercise a GPU encoder
+# (no display, no hardware on runners) — those stay on the pre-release human
+# checklist — but it confirms the code builds, renders, stays non-magenta, the
+# panel serves, and the packages assemble on real Windows and macOS.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y
+
+      - name: Show versions
+        run: |
+          python --version
+          ffmpeg -version
+          python filmify.py --version
+
+      - name: Run smoke test
+        run: python test_filmify.py

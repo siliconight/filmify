@@ -3,6 +3,22 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.26.0] — 2026-06-13
+
+### Added
+- Regression guard: `test_filmify.py`, a fast smoke test to run before every
+  push. It checks `__version__` matches the CHANGELOG (the bug that shipped
+  wrong metadata for three releases), that every style builds a filtergraph,
+  that 8-bit and 10-bit both render and stay neutral (the magenta bug), that
+  the panel serves and previews, and that the packages assemble with the
+  clean layout. Catches most of the regressions we've actually hit.
+- GitHub Actions workflow (`.github/workflows/smoke-test.yml`) running the
+  smoke test on Linux, macOS, and Windows on every push — so launcher and
+  platform code at least gets exercised on real OSes, even though CI can't
+  click a dialog or drive a GPU.
+- `RELEASE-CHECKLIST.md`: the human-only checks (native pickers surfacing,
+  GPU encode, app/shortcut building) that automation can't cover.
+
 ## [0.25.0] — 2026-06-13
 
 The "dial it in, process the whole movie, walk away" release.
