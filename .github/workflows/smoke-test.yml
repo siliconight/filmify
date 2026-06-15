@@ -48,3 +48,13 @@ jobs:
 
       - name: Run smoke test
         run: python test_filmify.py
+
+      - name: Install Playwright (Linux only — UI interaction test)
+        if: runner.os == 'Linux'
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run panel UI test
+        if: runner.os == 'Linux'
+        run: python test_panel_ui.py

@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.27.0"
+__version__ = "0.27.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1296,11 +1296,11 @@ function showHelp(key, x, y){
   pop.style.top = (y + 16) + "px";
 }
 function hideHelp(){ document.getElementById("helppop").style.display = "none"; }
+// Chips open their own popover (direct pointerdown listener). This global
+// handler only dismisses when clicking away from a chip or the popover.
 document.addEventListener("click", e => {
-  if (e.target.classList && e.target.classList.contains("hq")) {
-    e.stopPropagation();
-    showHelp(e.target.dataset.k, e.pageX, e.pageY);
-  } else if (e.target.id !== "helppop") { hideHelp(); }
+  if (e.target.classList && e.target.classList.contains("hq")) return;
+  if (e.target.id !== "helppop") hideHelp();
 });
 // add a "?" chip to every label whose following control (or own text) maps
 // to a help entry. Runs immediately since this script is at end of body.
@@ -1331,6 +1331,16 @@ document.addEventListener("click", e => {
     if (key && HELP[key]) {
       const q = document.createElement("span");
       q.className = "hq"; q.dataset.k = key; q.textContent = "?";
+      // Open on click, and stop the event so the document-level dismiss
+      // handler (which closes the popover) doesn't fire for this same click.
+      // Slider/checkbox labels contain an <output>/<input>, making the label
+      // labelable; preventDefault stops the label forwarding the click to its
+      // control, and stopPropagation stops the immediate re-close.
+      q.addEventListener("click", ev => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        showHelp(key, ev.pageX, ev.pageY);
+      });
       lab.appendChild(q);
     }
   });
