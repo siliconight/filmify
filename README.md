@@ -30,10 +30,9 @@ shoot gets a batch split-screen preview.
   Desktop and in the Start menu (pin it to the taskbar if you like) — click
   it any time, no console window, opens straight to the panel. The first
   run of any downloaded file may show SmartScreen ("Windows protected your
-  PC") — click **More info → Run anyway**, once. *(Setup — Python, FFmpeg —
-  is handled automatically the first time; FFmpeg is downloaded from
-  gyan.dev, the build ffmpeg.org links to, and kept next to the app,
-  nothing system-wide.)*
+  PC") — click **More info → Run anyway**, once. *(Setup — Python and FFmpeg —
+  is handled automatically the first time: Python from python.org (per-user, no
+  admin) and FFmpeg from gyan.dev, both kept for you, nothing else to install.)*
 
   Prefer not to make a shortcut? `START-HERE-WINDOWS.bat` works the same
   way on a double-click.
@@ -59,11 +58,14 @@ shoot gets a batch split-screen preview.
 Either way you get a fast split-screen preview — your footage on the left,
 the film look on the right — and a report opens in your browser.
 
-**Don't have Python?**
-- Windows: install from [python.org/downloads](https://www.python.org/downloads/)
-  and tick **"Add python.exe to PATH"** during install. (Heads-up: typing
-  `python` without it installed opens the Microsoft Store — use the
-  installer from python.org instead.)
+**Don't have Python?** If you use the **Start filmify** package (above), you
+don't need to do anything — it installs Python and FFmpeg for you on first
+launch, on both Mac and Windows. The notes below are only for running from the
+terminal directly:
+- Windows: the packaged launcher auto-installs the official python.org build
+  (per-user, no admin). To install manually instead, get it from
+  [python.org/downloads](https://www.python.org/downloads/) and tick
+  **"Add python.exe to PATH"**.
 - Mac: `brew install python3`, or the python.org installer. The command is
   `python3` on Mac, `python` on Windows.
 

@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 rem START HERE (Windows) -- double-click me.
 rem First run: I set up FFmpeg if needed (with your OK), then a file picker
 rem appears. Pick a clip to open the filmify control panel, or run me with a
@@ -8,16 +8,54 @@ rem folder dragged onto my icon to batch-preview a whole shoot.
 set "SCRIPT=%~dp0filmify.py"
 
 rem ---- Python ----------------------------------------------------------------
-where py >nul 2>nul
-if %errorlevel%==0 ( set "PY=py" ) else ( set "PY=python" )
-%PY% --version >nul 2>nul
-if not %errorlevel%==0 (
+rem Find a working Python; if none, offer to download and install the official
+rem python.org build automatically (per-user, no admin, adds itself to PATH).
+set "PY="
+where py >nul 2>nul && ( py --version >nul 2>nul && set "PY=py" )
+if not defined PY ( where python >nul 2>nul && ( python --version >nul 2>nul && set "PY=python" ) )
+
+if not defined PY (
   echo.
-  echo   Python was not found. Install it from https://www.python.org/downloads/
-  echo   and tick "Add python.exe to PATH" during install, then run me again.
+  echo   filmify needs Python ^(a free, open-source tool it runs on^).
+  echo   I can download and install the official version from python.org
+  echo   ^(about 25 MB, just for you -- no admin needed^).
   echo.
-  pause
-  exit /b 1
+  choice /m "  Download and install Python now"
+  if errorlevel 2 (
+    echo   OK -- install Python yourself from https://www.python.org/downloads/
+    echo   ^(tick "Add python.exe to PATH"^), then run me again.
+    pause
+    exit /b 1
+  )
+  echo   downloading Python 3.12.10...
+  powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' -OutFile \"$env:TEMP\filmify_py.exe\""
+  if not exist "%TEMP%\filmify_py.exe" (
+    echo   Download failed. Check your internet connection, or install Python
+    echo   yourself from https://www.python.org/downloads/ and run me again.
+    pause
+    exit /b 1
+  )
+  echo   installing Python ^(a progress window will appear^)...
+  "%TEMP%\filmify_py.exe" /passive InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1
+  del "%TEMP%\filmify_py.exe" >nul 2>nul
+  rem PATH was updated for new processes; find python in this session too
+  where py >nul 2>nul && ( py --version >nul 2>nul && set "PY=py" )
+  if not defined PY ( where python >nul 2>nul && ( python --version >nul 2>nul && set "PY=python" ) )
+  if not defined PY (
+    rem fall back to the standard per-user install location
+    for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python3*") do (
+      if exist "%%D\python.exe" set "PY=%%D\python.exe"
+    )
+  )
+  if not defined PY (
+    echo.
+    echo   Python was installed, but this window needs a restart to see it.
+    echo   Please close this window and double-click filmify again.
+    echo.
+    pause
+    exit /b 1
+  )
+  echo   Python ready.
 )
 
 rem ---- FFmpeg ----------------------------------------------------------------
