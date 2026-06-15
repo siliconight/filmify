@@ -118,8 +118,23 @@ def main():
         neutral = px is not None and abs(px[0] - px[1]) < 40 and abs(px[1] - px[2]) < 40
         check(f"{depth}-bit output is not magenta", neutral, f"pixel={px}")
 
-    # 5. Panel serves and /preview returns a JPEG — via a subprocess we can
-    #    reliably kill (run_ui blocks forever, so never call it in-process).
+    # 5. Panel server is structurally sound — class Handler exists in run_ui
+    #    and resolves. This catches NameError-at-startup bugs (like a severed
+    #    class def) WITHOUT needing a live socket, so it's reliable in CI.
+    import ast as _ast
+    src = (ROOT / "filmify.py").read_text()
+    tree = _ast.parse(src)
+    handler_ok = False
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.FunctionDef) and node.name == "run_ui":
+            classes = [n.name for n in _ast.walk(node)
+                       if isinstance(n, _ast.ClassDef)]
+            handler_ok = "Handler" in classes
+    check("panel server class is defined in run_ui", handler_ok,
+          "class Handler missing or out of scope")
+
+    # 6. Panel actually serves and /preview returns a JPEG — via a subprocess
+    #    we can reliably kill (run_ui blocks forever, so never call in-process).
     served = False
     preview_ok = False
     panel_err = ""
@@ -179,7 +194,19 @@ def main():
     soft_check("panel serves the control page", served, panel_err)
     soft_check("panel /preview returns a JPEG", preview_ok, panel_err)
 
-    # 6. Packages build and have the clean shape
+    # 7. Shipped .bat launchers must be pure ASCII — a stray non-ASCII byte
+    #    (an em-dash once) can corrupt .bat parsing on some Windows codepages.
+    bat_ok = True
+    bad = []
+    for bat in ROOT.glob("*.bat"):
+        try:
+            bat.read_text(encoding="ascii")
+        except UnicodeDecodeError:
+            bat_ok = False
+            bad.append(bat.name)
+    check("Windows .bat files are pure ASCII", bat_ok, ", ".join(bad))
+
+    # 8. Packages build and have the clean shape
     try:
         subprocess.run([sys.executable, str(ROOT / "build-packages.py")],
                        check=True, capture_output=True)

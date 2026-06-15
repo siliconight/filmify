@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.26.1"
+__version__ = "0.26.2"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1870,6 +1870,8 @@ def run_ui(args) -> None:
         state.update(rendering=False, batch=True, b_done=len(files),
                      pct=100, done=str(outdir),
                      b_name=f"{ok} of {len(files)} clips done")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
 
