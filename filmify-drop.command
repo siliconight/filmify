@@ -85,43 +85,17 @@ if ! have_tool ffmpeg || ! have_tool ffprobe; then
   echo "  FFmpeg ready."
 fi
 
-# ---- Pick the input ----------------------------------------------------------
-PICK=""
-if command -v osascript >/dev/null 2>&1; then
-  # Native macOS file picker — no dragging, no typing
-  PICK=$(osascript -e 'try' \
-    -e 'POSIX path of (choose file with prompt "filmify — choose a video clip (Cancel to pick a folder of clips instead)")' \
-    -e 'end try' 2>/dev/null)
-  if [ -z "$PICK" ]; then
-    PICK=$(osascript -e 'try' \
-      -e 'POSIX path of (choose folder with prompt "filmify — choose a folder of clips to batch")' \
-      -e 'end try' 2>/dev/null)
-  fi
-  if [ -z "$PICK" ]; then
-    echo "  Nothing chosen — closing."
-    pause_exit 0
-  fi
-else
-  # No osascript (non-macOS shell): fall back to drag-into-window
-  echo
-  echo "  filmify — drag a video file or folder into this window, then press Return:"
-  echo
-  read -r -p "  > " RAW
-  [ -z "$RAW" ] && { echo "  Nothing dropped — closing."; pause_exit 1; }
-  eval "ARGS=($RAW)"
-  PICK="${ARGS[0]}"
+# ---- Run -------------------------------------------------------------------
+echo
+echo "  filmify — drag a video file or folder into this window, then press Return:"
+echo
+read -r -p "  > " RAW
+if [ -z "$RAW" ]; then
+  echo "  Nothing dropped — closing."
+  pause_exit 1
 fi
+# Terminal pastes the path shell-escaped; expand it the way the shell would.
+eval "ARGS=($RAW)"
 
-if [ -d "$PICK" ]; then
-  # Folder: batch a fast split-screen preview of every clip
-  python3 filmify.py "$PICK" --compare --preview
-  pause_exit 0
-else
-  # Single clip: open the control panel (close this window to stop it)
-  echo
-  echo "  Opening the filmify panel in your browser."
-  echo "  Keep this window open while you work; close it when you're done."
-  echo
-  python3 filmify.py "$PICK" --ui
-  pause_exit 0
-fi
+python3 filmify.py "${ARGS[@]}" --compare --preview
+pause_exit 0

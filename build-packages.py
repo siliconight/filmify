@@ -144,5 +144,35 @@ def main():
     print(f"done -> {DIST}")
 
 
+def clean():
+    """Remove generated artifacts from the working tree, leaving source and
+    any test footage untouched. Targets exactly the things .gitignore already
+    declares disposable (plus the two stale root release zips), so a dev tree
+    goes back to a clean, shippable state without touching your clips."""
+    removed = []
+    # directories
+    for d in [DIST, ROOT / "__pycache__"] + list(ROOT.glob("sweep_*")):
+        if d.is_dir():
+            shutil.rmtree(d)
+            removed.append(d.name + "/")
+    # files: stale root release zips, logs, reports, smoke temp files
+    patterns = ["filmify-mac.zip", "filmify-windows.zip",
+                "*.log", "*_report.html", "_smoke_*", "filmify_logo.png"]
+    for pat in patterns:
+        for p in ROOT.glob(pat):
+            if p.is_file():
+                p.unlink()
+                removed.append(p.name)
+    if removed:
+        print("cleaned:", ", ".join(sorted(removed)))
+    else:
+        print("already clean")
+    print("(test footage — *.mp4/*.mov — left untouched)")
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--clean" in sys.argv[1:]:
+        clean()
+    else:
+        main()

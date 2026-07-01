@@ -37,13 +37,16 @@ def render_page():
     return f
 
 
-def main():
+class _Skip(Exception):
+    """Environment can't run the browser test — pytest skips, CLI prints SKIP."""
+
+
+def _run_checks():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        print("SKIP: playwright not installed "
-              "(pip install playwright && python -m playwright install chromium)")
-        return 0
+        raise _Skip("playwright not installed "
+                    "(pip install playwright && python -m playwright install chromium)")
 
     page_file = render_page()
     fails = []
@@ -57,8 +60,7 @@ def main():
         try:
             browser = p.chromium.launch()
         except Exception as exc:  # noqa: BLE001 — no browser binary, etc.
-            print(f"SKIP: chromium can't launch ({exc})")
-            return 0
+            raise _Skip(f"chromium can't launch ({exc})")
         pg = browser.new_page()
         pg.goto(f"file://{page_file}")
         pop = pg.query_selector("#helppop")
@@ -122,6 +124,25 @@ def main():
 
         browser.close()
 
+    return fails
+
+
+def test_panel_ui():
+    """pytest entry point — skips cleanly when no browser is available."""
+    import pytest
+    try:
+        fails = _run_checks()
+    except _Skip as exc:
+        pytest.skip(str(exc))
+    assert not fails, "panel UI failures: " + ", ".join(fails)
+
+
+def main():
+    try:
+        fails = _run_checks()
+    except _Skip as exc:
+        print(f"SKIP: {exc}")
+        return 0
     print(f"\n{'all green' if not fails else 'FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0
 

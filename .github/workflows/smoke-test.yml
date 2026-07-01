@@ -5,7 +5,7 @@ name: smoke test
 # they reach a user. It cannot click a native dialog or exercise a GPU encoder
 # (no display, no hardware on runners) — those stay on the pre-release human
 # checklist — but it confirms the code builds, renders, stays non-magenta, the
-# panel serves, and the packages assemble on real Windows and macOS.
+# panel serves, the packages assemble, and the launchers lint clean.
 
 on:
   push:
@@ -17,6 +17,7 @@ jobs:
   smoke:
     name: smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +28,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest
 
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
@@ -46,8 +50,9 @@ jobs:
           ffmpeg -version
           python filmify.py --version
 
-      - name: Run smoke test
-        run: python test_filmify.py
+      - name: Run smoke + launcher tests
+        timeout-minutes: 10
+        run: pytest -q -s test_filmify.py test_launchers.py
 
       - name: Install Playwright (Linux only — UI interaction test)
         if: runner.os == 'Linux'
@@ -57,4 +62,20 @@ jobs:
 
       - name: Run panel UI test
         if: runner.os == 'Linux'
-        run: python test_panel_ui.py
+        timeout-minutes: 5
+        run: pytest -q -s test_panel_ui.py
+
+  lint:
+    name: shell lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck + bash -n on launchers
+        run: |
+          shellcheck --version
+          for f in *.command *.sh; do
+            echo "== $f =="
+            bash -n "$f"
+            shellcheck "$f"
+          done

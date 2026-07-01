@@ -3,6 +3,42 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.30.2] — 2026-07-01
+
+### Fixed
+- **The Mac `START-HERE-MAC.command` launcher was broken.** Its two launch
+  lines ran `"$PY" filmify.py …` but `PY` was never assigned, so it expanded
+  to nothing and double-clicking the launcher did nothing. Now calls `python3`
+  directly, matching the sibling launchers (`filmify-drop.command`,
+  `filmify-launch.sh`) that already did the right thing.
+
+### Changed
+- **Release hygiene.** Removed the two stale `filmify-mac.zip` /
+  `filmify-windows.zip` copies that were committed at the repo root. The real
+  release artifacts are built fresh into the git-ignored `dist/` by
+  `build-packages.py` and belong on GitHub Releases; the root copies were dead
+  weight. Both names are now git-ignored so they can't creep back in.
+- **`build-packages.py --clean`.** New flag that strips generated cruft
+  (`dist/`, `__pycache__/`, `*.log`, `*_report.html`, `sweep_*/`, smoke temp
+  files, stale root zips) from a working tree without touching source or test
+  footage — so a dev tree returns to a clean, shippable state.
+
+### Tests / CI
+- **Tests are now pytest-discoverable.** `test_filmify.py` and
+  `test_panel_ui.py` expose `test_*` entry points (and still run as scripts).
+  The panel test now `pytest.skip`s cleanly when no browser is present instead
+  of silently passing.
+- **New `test_launchers.py`.** Shell-lint (`bash -n` + shellcheck) plus a
+  targeted guard for the `$PY` bug class: any launcher that runs an interpreter
+  variable must actually assign it. Note that guard is load-bearing —
+  shellcheck suppresses SC2154 for uppercase names and `bash -n` sees valid
+  syntax, so neither would have caught the original bug on their own.
+- **CI hardening.** Job- and step-level `timeout-minutes` on every leg; the
+  panel subprocess now launches in its own process group and is torn down as a
+  tree (so orphaned ffmpeg workers can't hang the runner); all setup/build
+  subprocesses have explicit timeouts; a new `lint` job runs shellcheck +
+  `bash -n` on the launchers.
+
 ## [0.30.1] — 2026-06-13
 
 ### Changed

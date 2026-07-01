@@ -13,7 +13,9 @@ Needs ffmpeg/ffprobe on PATH (or next to filmify.py). No other dependencies.
 import http.client
 import importlib.util
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -23,6 +25,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 FAILS = []
 PASSES = []
+
+
+def _kill_tree(proc):
+    """Kill a subprocess AND its children. `--ui` spawns ffmpeg workers; a bare
+    proc.terminate() can orphan them, so we signal the whole process group
+    (POSIX) or tree (Windows). No-op if the process already exited."""
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 def check(name, cond, detail=""):
@@ -52,7 +74,11 @@ def rgb_at(path, x, y):
     return tuple(d[:3]) if len(d) >= 3 else None
 
 
-def main():
+def run_all():
+    """Run every smoke check. Returns the list of failed check names (empty =
+    all green). Does not exit — callers decide (CLI exits, pytest asserts)."""
+    FAILS.clear()
+    PASSES.clear()
     print("filmify smoke test\n")
     fm = load_module()
 
@@ -70,7 +96,7 @@ def main():
     clip = ROOT / "_smoke_clip.mp4"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
                     "testsrc2=s=320x180:r=24:d=1", "-c:v", "libx264",
-                    "-preset", "veryfast", str(clip)], check=True)
+                    "-preset", "veryfast", str(clip)], check=True, timeout=60)
 
     import argparse
 
@@ -110,7 +136,7 @@ def main():
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
                         "color=0x808080:s=320x180:r=24:d=1", "-c:v",
                         "libx264", "-preset", "veryfast", str(gray)],
-                       check=True)
+                       check=True, timeout=60)
         res = fm.render(gray, out, a)
         check(f"{depth}-bit render succeeds", res.get("ok"), res.get("error"))
         px = rgb_at(out, 160, 90) if out.exists() else None
@@ -138,9 +164,12 @@ def main():
     served = False
     preview_ok = False
     panel_err = ""
+    # Own process group / tree so _kill_tree can take down ffmpeg workers too.
+    _grp = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            if os.name == "nt" else {"start_new_session": True})
     proc = subprocess.Popen(
         [sys.executable, str(ROOT / "filmify.py"), str(clip), "--ui"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **_grp)
     url = None
     try:
         start = time.time()
@@ -177,11 +206,7 @@ def main():
     except Exception as exc:  # noqa: BLE001
         panel_err = str(exc)
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _kill_tree(proc)
     # Panel checks are environment-sensitive (port binding, server startup
     # timing under CI). Report them but don't fail the whole suite on them —
     # the substantive correctness checks above are what guard regressions.
@@ -209,7 +234,7 @@ def main():
     # 8. Packages build and have the clean shape
     try:
         subprocess.run([sys.executable, str(ROOT / "build-packages.py")],
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, timeout=120)
         import zipfile
         ok = True
         for z, start in (("filmify-mac.zip", "Start filmify.command"),
@@ -231,8 +256,20 @@ def main():
     print(f"\n{len(PASSES)} passed, {len(FAILS)} failed")
     if FAILS:
         print("FAILED:", ", ".join(FAILS))
-        sys.exit(1)
-    print("all green ✓")
+    else:
+        print("all green ✓")
+    return list(FAILS)
+
+
+def test_smoke():
+    """pytest entry point — runs the full smoke suite and asserts it's green."""
+    fails = run_all()
+    assert not fails, "smoke failures: " + ", ".join(fails)
+
+
+def main():
+    fails = run_all()
+    sys.exit(1 if fails else 0)
 
 
 if __name__ == "__main__":

@@ -9,3 +9,7 @@ __pycache__/
 filmify_logo.png
 pv.jpg
 sweep_*/
+# stale, generated — the real release zips live in dist/ and go to GitHub Releases
+/filmify-mac.zip
+/filmify-windows.zip
+_smoke_*
