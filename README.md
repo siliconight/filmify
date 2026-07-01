@@ -330,11 +330,14 @@ without running it.
    character; filmify steps out of the way and skips its own split tone.
 6. **Color discipline** — mild desaturation, warm highlights, faintly cool
    shadows. Restrained on purpose; skin stays natural.
-7. **Halation** — bright areas glow softly red-orange instead of clipping,
-   the way light bounces inside a real film base.
+7. **Halation** — bright objects grow a soft red-orange halo *around their
+   edges*, the way light scatters back off a real film base — not a flat bloom.
 8. **Grain** — a real scanned grain plate if you have one (looped and
-   overlay-blended), otherwise synthesized temporal grain weighted to luma
-   so it reads as silver grain, not sensor noise.
+   overlay-blended), otherwise synthesized grain with separate layers: fine,
+   lively silver (luma) grain and softer, steadier dye-cloud (chroma) grain,
+   weighted to the midtones so it reads as film, not sensor noise. On a
+   heavily-compressed source the grain eases back automatically so it doesn't
+   amplify blocking (`--no-compression-adapt` to keep it full).
 9. **Vignette** — slight corner falloff, like a lens.
 
 Output is encoded with `x264 -tune grain` so the encoder doesn't smooth the

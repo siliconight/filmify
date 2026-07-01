@@ -155,6 +155,19 @@ def run_all():
     check("normalize: HDR is left to the tonemap stage",
           fm.source_normalize(dict(std_src, hdr=True), na) == "")
 
+    # 3d. Compression-aware defaults: a heavily-compressed (low-bpp) source eases
+    # the PRESET grain back; an explicit --grain is never scaled.
+    import re as _re
+
+    def _c0s(a_, bpp):
+        g = fm.build_filtergraph(a_, dict(info, bpp=bpp))
+        mm = _re.search(r"noise=c0s=(\d+)", g)
+        return int(mm.group(1)) if mm else -1
+    check("compression-adapt: low bpp eases preset grain",
+          0 < _c0s(base_args(grain=None), 0.02) < _c0s(base_args(grain=None), 0.4))
+    check("compression-adapt: explicit --grain is not scaled",
+          _c0s(base_args(grain=8), 0.02) == 8)
+
     # 4. Renders succeed AND aren't magenta (the 10-bit bug)
     for depth in (8, 10):
         out = ROOT / f"_smoke_out{depth}.mp4"

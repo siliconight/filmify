@@ -3,6 +3,33 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.34.0] — 2026-07-01
+
+### Changed
+- **Edge-aware halation.** Real halation is a red-orange halo scattering back off
+  the film base *around* bright objects — strongest just outside a highlight's
+  edge, not a flat bloom over the whole bright area. The highlight is now spread,
+  most of the sharp core subtracted back out, and the leftover fringe tinted and
+  screened — so speculars get a glowing edge instead of a washed bright patch. A
+  little core glow is kept so large highlights still bloom.
+- **Luma / chroma grain separation.** Silver (luma) grain and dye-cloud (chroma)
+  grain are physically different layers, and now render that way: luma grain
+  stays fine and dances every frame; chroma grain is coarser (a chroma-only blur
+  on the grain plate) and temporally averaged, so it reads as soft colour clouds
+  instead of per-pixel chroma fizz.
+- **Grain continuity.** The chroma grain's temporal averaging locks frame-to-frame
+  continuity, which is what stops grain from boiling. (Grain was already
+  byte-deterministic across renders, so matched shots and re-renders stay
+  consistent.)
+
+### Added
+- **Compression-aware defaults.** `probe()` now reads bitrate and derives
+  bits-per-pixel. On a heavily-compressed source (low bpp — a streaming rip, an
+  old phone clip) filmify eases preset grain back and leans a little harder on
+  chroma softening, so it doesn't amplify the existing macroblocking or waste
+  grain that a re-encode would destroy. Only touches preset grain (an explicit
+  `--grain` is respected); disable with `--no-compression-adapt`.
+
 ## [0.33.0] — 2026-07-01
 
 ### Added

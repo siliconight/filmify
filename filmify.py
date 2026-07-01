@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.33.0"
+__version__ = "0.34.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -407,7 +407,8 @@ def probe(path: Path) -> dict:
         FFPROBE, "-v", "error", "-select_streams", "v:0",
         "-show_entries",
         "stream=avg_frame_rate,width,height,pix_fmt,color_range,"
-        "color_space,color_primaries,color_transfer:format=duration",
+        "color_space,color_primaries,color_transfer,bit_rate:"
+        "format=duration,bit_rate",
         "-of", "json", str(path),
     ]
     out = run(cmd, capture_output=True, text=True)
@@ -420,13 +421,26 @@ def probe(path: Path) -> dict:
     fps = float(num) / float(den) if float(den) else 0.0
     dur = float(data.get("format", {}).get("duration", 0) or 0)
     trc = info.get("color_transfer") or ""
-    return {"fps": fps, "width": info["width"], "height": info["height"],
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+    bitrate = _int(info.get("bit_rate")) or _int(data.get("format", {}).get("bit_rate"))
+    w, h = info["width"], info["height"]
+    # bits per pixel per frame — the compression tell. ~0.3+ is a clean master;
+    # under ~0.06 is a heavily-compressed source (streaming rip, old phone clip).
+    bpp = (bitrate / (w * h * fps)) if (bitrate and w and h and fps) else None
+
+    return {"fps": fps, "width": w, "height": h,
             "duration": dur,
             "pix_fmt": info.get("pix_fmt") or "",
             "color_range": info.get("color_range") or "",
             "color_space": info.get("color_space") or "",
             "color_primaries": info.get("color_primaries") or "",
             "color_transfer": trc,
+            "bitrate": bitrate, "bpp": bpp,
             "hdr": trc in ("smpte2084", "arib-std-b67")}
 
 
@@ -587,6 +601,21 @@ def build_filtergraph(args, info: dict) -> str:
     elif args.gauge == "70mm":
         p["grain"] = max(0, round(p["grain"] * 0.5))
         p["soften"] = max(0.0, p["soften"] * 0.6)
+
+    # Compression-aware: a heavily-compressed source (low bits-per-pixel) is
+    # already full of macroblock edges and DCT mush. Piling full grain on it
+    # amplifies the blocking, and that grain won't survive a re-encode anyway —
+    # so ease grain back and lean a touch harder on chroma softening to hide the
+    # blocking. Only when grain wasn't set explicitly; never below a floor.
+    bpp = info.get("bpp")
+    if (bpp is not None and getattr(args, "grain", None) is None
+            and not getattr(args, "no_compression_adapt", False)):
+        if bpp < 0.04:
+            p["grain"] = max(1, round(p["grain"] * 0.45))
+            p["chroma"] += 0.5
+        elif bpp < 0.08:
+            p["grain"] = max(1, round(p["grain"] * 0.7))
+            p["chroma"] += 0.25
 
     chain = []
     pre = []   # ratio crop + temporal conform run before the compare split,
@@ -771,20 +800,25 @@ def build_filtergraph(args, info: dict) -> str:
     else:
         prefix = "[0:v]" + (",".join(pre) + "," if pre else "")
 
-    # -- 10. Halation: split → isolate highlights → blur → tint → screen -----
+    # -- 10. Halation (edge-aware): real halation is light scattering back off
+    #        the film base as a red-orange HALO around bright objects — strongest
+    #        just outside a highlight's edge, not a flat bloom over the whole
+    #        bright area. So: isolate highlights, spread them, then subtract most
+    #        of the sharp core back out. What's left is the fringe that spilled
+    #        past the edges; a little core glow is kept so big speculars still
+    #        bloom. Final soft blur smooths the ring.
     if p["halation"] > 0:
         t = p["halation_thresh"]
         # B&W stock halos stay neutral; color stock halos go red-orange
         tint = "" if args.bw else ",colorchannelmixer=rr=1.0:gg=0.46:bb=0.24"
-        hal = (
-            f"format={rgbfmt},"
-            f"colorlevels=rimin={t}:gimin={t}:bimin={t},"
-            f"gblur=sigma=16"
-            f"{tint}"
-        )
         graph = (
             f"{prefix}{body},split[base][hl];"
-            f"[hl]{hal}[hal];"
+            f"[hl]format={rgbfmt},colorlevels=rimin={t}:gimin={t}:bimin={t}[hlc];"
+            f"[hlc]split[core][spread];"
+            f"[spread]gblur=sigma=18[bloom];"
+            f"[core]colorlevels=romax=0.6:gomax=0.6:bomax=0.6[coredim];"
+            f"[bloom][coredim]blend=all_mode=subtract[fringe];"
+            f"[fringe]gblur=sigma=6{tint}[hal];"
             f"[base]format={rgbfmt}[baseR];"
             f"[baseR][hal]blend=all_mode=screen:all_opacity={p['halation']:.2f}[pre]"
         )
@@ -873,11 +907,17 @@ def build_filtergraph(args, info: dict) -> str:
         gw = max(2, int(w_px / gdiv / 2) * 2)
         gh = max(2, int(h_px / gdiv / 2) * 2)
         upscale = "" if gdiv == 1.0 else f",scale={w_px}:{h_px}:flags=bilinear"
+        # Luma / chroma grain are physically different layers. Silver (luma)
+        # grain is fine and dances every frame -> sharp, temporal (t+u). Dye-cloud
+        # (chroma) grain is coarser and more temporally stable -> averaged (t+u+a)
+        # for frame-to-frame continuity, plus a chroma-only blur so it reads as
+        # soft colour clouds, not per-pixel chroma fizz. That separation is what
+        # keeps grain from boiling.
         graph += (
             f";color=c=0x808080:s={gw}x{gh}:r={out_fps:g},"
             f"noise=c0s={g}:c0f=t+u:"
-            f"c1s={max(1, g // 3)}:c1f=t+u:c2s={max(1, g // 3)}:c2f=t+u"
-            f"{upscale},format={wfmt}[gnz];"
+            f"c1s={max(1, g // 3)}:c1f=t+u+a:c2s={max(1, g // 3)}:c2f=t+u+a"
+            f"{upscale},format={wfmt},gblur=sigma=1.6:planes=6[gnz];"
             f"{cur}split=3[gb][gov][gmsk];"
             f"[gov][gnz]blend=all_mode=overlay:shortest=1[govd];"
             f"[gmsk]format=gray,"
@@ -1062,6 +1102,12 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
         else:
             print("warn  : HDR source, but this ffmpeg lacks zscale — colors "
                   "may look washed; install a full ffmpeg build")
+
+    bpp = info.get("bpp")
+    if (bpp is not None and bpp < 0.08 and getattr(args, "grain", None) is None
+            and not getattr(args, "no_compression_adapt", False)):
+        print(f"note  : heavily-compressed source ({bpp:.3f} bpp) — easing grain "
+              "back to avoid amplifying blocking (--no-compression-adapt to keep full)")
 
     graph = build_filtergraph(args, info)
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-stats",
@@ -2320,6 +2366,8 @@ def main() -> None:
                     default="auto",
                     help="override source level-range detection when a file is "
                          "mistagged (default: auto, from the file's own tags)")
+    ap.add_argument("--no-compression-adapt", action="store_true",
+                    help="don't auto-reduce grain on heavily-compressed sources")
     ap.add_argument("--force", action="store_true",
                     help="re-render batch outputs that already exist")
     ap.add_argument("--no-report", action="store_true",
