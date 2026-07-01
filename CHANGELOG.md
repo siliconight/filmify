@@ -3,6 +3,31 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.32.0] — 2026-07-01
+
+### Added
+- **Colour management — a look is only as good as the input transform.**
+  `probe()` now reads `pix_fmt`, `color_range`, `color_space`, and
+  `color_primaries` alongside the transfer, so filmify knows what it's actually
+  being handed.
+- **Conditional source normalize (before the look).** Full-range (PC/JPEG)
+  levels and non-709 primaries (BT.2020 SDR, SD 601/170M) are corrected to
+  Rec.709 limited *before* the curve/halation/grain run, so the look always
+  lands on a standard image instead of clipped or mis-primaried footage. This
+  is strictly conditional: a normal Rec.709 SDR clip has **nothing** inserted —
+  it passes through pixel-for-pixel unchanged. Uses `zscale` when present.
+- **`--input-range auto|full|limited`.** Override level-range detection for
+  files that are mistagged or carry no range tag.
+- **Output colour metadata.** Renders are now tagged Rec.709 / bt709 / limited
+  — exactly what the pipeline produces — so players and editors interpret them
+  correctly instead of guessing. Previously the file shipped colour-unspecified.
+
+### Changed
+- **HDR tone-map now interprets the source explicitly.** The HLG/PQ → Rec.709
+  tone-map declares the source transfer, primaries, matrix, and range to
+  `zscale` (from the probe) rather than relying on inference from container tags
+  that phones frequently omit — so HDR conversion is correct, not a guess.
+
 ## [0.31.0] — 2026-07-01
 
 ### Added

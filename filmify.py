@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.31.0"
+__version__ = "0.32.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -406,7 +406,8 @@ def probe(path: Path) -> dict:
     cmd = [
         FFPROBE, "-v", "error", "-select_streams", "v:0",
         "-show_entries",
-        "stream=avg_frame_rate,width,height,color_transfer:format=duration",
+        "stream=avg_frame_rate,width,height,pix_fmt,color_range,"
+        "color_space,color_primaries,color_transfer:format=duration",
         "-of", "json", str(path),
     ]
     out = run(cmd, capture_output=True, text=True)
@@ -420,7 +421,13 @@ def probe(path: Path) -> dict:
     dur = float(data.get("format", {}).get("duration", 0) or 0)
     trc = info.get("color_transfer") or ""
     return {"fps": fps, "width": info["width"], "height": info["height"],
-            "duration": dur, "hdr": trc in ("smpte2084", "arib-std-b67")}
+            "duration": dur,
+            "pix_fmt": info.get("pix_fmt") or "",
+            "color_range": info.get("color_range") or "",
+            "color_space": info.get("color_space") or "",
+            "color_primaries": info.get("color_primaries") or "",
+            "color_transfer": trc,
+            "hdr": trc in ("smpte2084", "arib-std-b67")}
 
 
 _FILTER_LIST = None
@@ -512,6 +519,55 @@ def save_look_file(args) -> None:
     print(f"look saved: {args.save_look}")
 
 
+# ffprobe colour tag -> zscale token. Only recognised, genuinely non-standard
+# values map; anything unknown/unspecified/709 is treated as standard and left
+# completely alone — a normal Rec.709 SDR clip must pass through untouched, so
+# we never guess a source's colour.
+_ZS_PRIMARIES = {"bt709": "709", "bt2020": "2020", "smpte170m": "170m",
+                 "bt470bg": "470bg", "smpte240m": "240m", "film": "film"}
+_ZS_MATRIX = {"bt709": "709", "bt2020nc": "2020_ncl", "bt2020_ncl": "2020_ncl",
+              "smpte170m": "170m", "bt470bg": "470bg", "smpte240m": "240m",
+              "fcc": "fcc"}
+_PRIM_TO_MAT = {"2020": "2020_ncl", "170m": "170m", "470bg": "470bg",
+                "240m": "240m", "709": "709", "film": "709"}
+_JPEG_PIXFMTS = {"yuvj420p", "yuvj422p", "yuvj444p", "yuvj440p", "yuvj411p"}
+
+
+def _is_full_range(info: dict, args) -> bool:
+    """Whether the source carries full (PC/JPEG) levels. Honours an explicit
+    --input-range override; otherwise reads the file's tags."""
+    override = getattr(args, "input_range", "auto")
+    if override in ("full", "limited"):
+        return override == "full"
+    return (info.get("color_range") in ("pc", "jpeg", "full")
+            or info.get("pix_fmt") in _JPEG_PIXFMTS)
+
+
+def source_normalize(info: dict, args) -> str:
+    """CONDITIONAL pre-look normalize. Returns "" for a standard Rec.709
+    limited-range SDR source (nothing is inserted — pure pass-through). It only
+    engages when the source is provably non-standard: full-range levels, or
+    non-709 primaries. The look then always lands on a standard image. HDR is
+    handled upstream by the tonemap stage, so it's skipped here."""
+    if info.get("hdr"):
+        return ""
+    full = _is_full_range(info, args)
+    prim = _ZS_PRIMARIES.get(info.get("color_primaries", ""))
+    non709_prim = prim is not None and prim != "709"
+    if not full and not non709_prim:
+        return ""  # standard / unspecified -> leave it completely alone
+    if not has_filter("zscale"):
+        # best effort without zscale: fix levels at least (primaries need zscale)
+        return "scale=in_range=full:out_range=tv" if full else ""
+    if non709_prim:
+        mat = _ZS_MATRIX.get(info.get("color_space", ""),
+                             _PRIM_TO_MAT.get(prim, "709"))
+        rin = "full" if full else "limited"
+        return (f"zscale=pin={prim}:min={mat}:tin=709:rin={rin}:"
+                "p=709:m=709:t=709:r=tv")
+    return "zscale=rin=full:r=tv"  # range only, nothing else touched
+
+
 def build_filtergraph(args, info: dict) -> str:
     p = dict(LOOKS[args.look])  # copy preset, then apply CLI overrides
     for key in ("grain", "halation", "soften", "saturation", "plate_opacity"):
@@ -575,13 +631,28 @@ def build_filtergraph(args, info: dict) -> str:
 
     # -- 1.5 HDR development: phones default to HLG/PQ recording; fed to a
     #        Rec.709 pipeline untouched it comes out washed and wrong, and
-    #        the user blames the tool. Tone-map to 709 first.
+    #        the user blames the tool. Tone-map to 709 first, declaring the
+    #        source transfer/primaries/matrix/range EXPLICITLY so zscale never
+    #        has to guess from (often missing) container tags.
     if info.get("hdr") and not args.no_tonemap and has_filter("zscale"):
+        tin = "smpte2084" if info.get("color_transfer") == "smpte2084" else "arib-std-b67"
+        pin = _ZS_PRIMARIES.get(info.get("color_primaries", ""), "2020")
+        minm = _ZS_MATRIX.get(info.get("color_space", ""), "2020_ncl")
+        rin = "full" if _is_full_range(info, args) else "limited"
         chain.append(
-            "zscale=t=linear:npl=100,"
+            f"zscale=tin={tin}:pin={pin}:min={minm}:rin={rin}:"
+            "t=linear:npl=100,"
             "tonemap=tonemap=hable:desat=0,"
-            "zscale=t=bt709:m=bt709:p=bt709"
+            "zscale=t=bt709:m=bt709:p=bt709:r=tv"
         )
+
+    # -- 1.6 Conditional source normalize: full-range levels or non-709
+    #        primaries get corrected to Rec.709 limited BEFORE the look, so the
+    #        curve/halation/grain always land on a standard image. A standard
+    #        SDR clip hits nothing here (source_normalize returns "").
+    norm = source_normalize(info, args)
+    if norm:
+        chain.append(norm)
 
     # -- 2. Working bit depth --------------------------------------------------
     chain.append(f"format={wfmt}")
@@ -1037,6 +1108,12 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
                     "-threads", "0", "-c:a", "copy"]
         if hw:
             print(f"encode: hardware ({hw})")
+    # Tag the output as Rec.709 limited-range SDR — which is exactly what the
+    # pipeline always produces (HDR is tone-mapped, non-standard sources are
+    # normalized). Without these the file ships colour-unspecified and players /
+    # editors may misinterpret it. These are stream tags, not a conversion.
+    cmd += ["-color_primaries", "bt709", "-color_trc", "bt709",
+            "-colorspace", "bt709", "-color_range", "tv"]
     cmd += ["-metadata",
             f"comment=processed with filmify {__version__} | "
             f"{summarize_settings(args)}"]
@@ -2239,6 +2316,10 @@ def main() -> None:
                          "a GPU encoder is available (use software libx264)")
     ap.add_argument("--no-tonemap", action="store_true",
                     help="don't auto tone-map HDR (HLG/PQ) sources to Rec.709")
+    ap.add_argument("--input-range", choices=("auto", "full", "limited"),
+                    default="auto",
+                    help="override source level-range detection when a file is "
+                         "mistagged (default: auto, from the file's own tags)")
     ap.add_argument("--force", action="store_true",
                     help="re-render batch outputs that already exist")
     ap.add_argument("--no-report", action="store_true",

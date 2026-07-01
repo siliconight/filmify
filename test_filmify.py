@@ -137,6 +137,24 @@ def run_all():
             ok = False
         check(f"filtergraph builds: look {look}", ok)
 
+    # 3c. Source normalize is CONDITIONAL: a standard Rec.709 SDR source must be
+    # a pure pass-through (""), while non-standard sources must engage. This
+    # locks the load-bearing invariant that normal footage is never touched.
+    na = base_args()
+    std_src = dict(hdr=False, color_range="", color_primaries="",
+                   color_space="", pix_fmt="yuv420p")
+    check("normalize: standard SDR is pass-through",
+          fm.source_normalize(std_src, na) == "")
+    check("normalize: full-range engages",
+          "full" in fm.source_normalize(dict(std_src, color_range="pc"), na))
+    check("normalize: yuvj full-range engages",
+          fm.source_normalize(dict(std_src, pix_fmt="yuvj420p"), na) != "")
+    check("normalize: non-709 primaries engages",
+          "2020" in fm.source_normalize(
+              dict(std_src, color_primaries="bt2020", color_space="bt2020nc"), na))
+    check("normalize: HDR is left to the tonemap stage",
+          fm.source_normalize(dict(std_src, hdr=True), na) == "")
+
     # 4. Renders succeed AND aren't magenta (the 10-bit bug)
     for depth in (8, 10):
         out = ROOT / f"_smoke_out{depth}.mp4"

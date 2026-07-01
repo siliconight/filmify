@@ -218,7 +218,11 @@ no terminal at any point. Drop a folder instead and you get the batch
 split-screen preview.
 
 Shooting on a phone? HDR (HLG/PQ) sources are detected and tone-mapped to
-Rec.709 automatically, so colors come out right instead of washed.
+Rec.709 automatically, so colors come out right instead of washed. Full-range
+(PC/JPEG) levels and non-709 primaries are corrected before the look runs, and
+the output is tagged Rec.709 so editors read it correctly — a standard Rec.709
+clip passes through untouched. If a file is mistagged, force it with
+`--input-range full` (or `limited`).
 Re-running a batch only renders clips that don't have output yet
 (`--force` redoes all).
 
@@ -310,6 +314,9 @@ without running it.
 
 ## What the pipeline does (in order)
 
+0. **Source development** — HDR (HLG/PQ) is tone-mapped to Rec.709; full-range
+   levels and non-709 primaries are normalized. Standard Rec.709 footage skips
+   this untouched. Everything below then lands on a clean, standard image.
 1. **24 fps / 180° shutter conform** (`--conform`) — blends adjacent frames
    from high-fps sources to synthesize natural motion blur, then drops to
    24 fps. This is the single biggest "video vs film" tell.
