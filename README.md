@@ -340,6 +340,18 @@ without running it.
 Output is encoded with `x264 -tune grain` so the encoder doesn't smooth the
 texture back out.
 
+## Checking the look holds up
+
+`sweep.py` is the QA companion. `--check` answers "is the default too strong?"
+in one pass; `--validate` runs a controlled reference set (gray card, skin
+tones, highlight/shadow, night practical) and writes a **before/after contact
+sheet** plus a **version-tagged stats JSON** you can diff between releases:
+
+```sh
+python sweep.py --validate           # synthetic references
+python sweep.py --validate clip.mp4  # ...plus your own footage
+```
+
 ## What filmify can't do
 
 It finishes the look — it can't recover what the camera threw away. The

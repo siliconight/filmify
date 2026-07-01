@@ -3,6 +3,31 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.33.0] — 2026-07-01
+
+### Added
+- **`sweep.py --validate` — reference validation for the default look.** Renders
+  a controlled synthetic set (neutral gray card, three skin tones, a highlight
+  patch, a shadow patch, and a night-practical frame), measures the properties
+  that actually matter, and leaves two artifacts behind:
+  - a **before/after contact sheet** (`references/filmify_references_<ver>.png`)
+    so you can *see* the whole set at a glance, and
+  - a **version-tagged stats JSON** (`references/filmify_reference_stats_<ver>.json`)
+    you can diff between releases to catch drift.
+  Pass a real clip to fold it into both. Metrics: neutral cast, skin-hue drift,
+  saturation kept, highlight/shadow clipping, and luma drift — each gated only
+  on the references where it's meaningful (a skin swatch's hue, a gray card's
+  cast), so a PASS/WARN table you can trust.
+- Clipping is measured in tv-range (pinned near 235 / 16, not 255 / 0) on a
+  centre crop, so the intentional vignette's corner falloff is never mistaken
+  for crushed shadow or blown highlight detail.
+- Cross-platform contact-sheet labels (Win/mac/Linux font discovery, graceful
+  fallback to an unlabelled sheet if no system font is found).
+
+### Housekeeping
+- `references/` is git-ignored and cleaned by `build-packages.py --clean`.
+- Smoke suite gained a cheap structural guard for the validation scaffold.
+
 ## [0.32.0] — 2026-07-01
 
 ### Added

@@ -295,6 +295,21 @@ def test_smoke():
     assert not fails, "smoke failures: " + ", ".join(fails)
 
 
+def test_sweep_validate_scaffold():
+    """Cheap structural guard for the reference-validation harness — imports
+    sweep.py and checks its scaffold without running any renders, so a broken
+    --validate can't ship silently."""
+    spec = importlib.util.spec_from_file_location("sweep", ROOT / "sweep.py")
+    sw = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sw)
+    assert sw.REFERENCES, "reference set is empty"
+    assert all(kind in ("cast", "skin", "high", "low")
+               for _, kind in sw.REFERENCES.values()), "unknown reference kind"
+    # Windows drive-colon must be escaped for a drawtext fontfile=
+    assert sw._dt_font("C:/Windows/Fonts/arial.ttf") == "C\\:/Windows/Fonts/arial.ttf"
+    assert sw._find_font() is None or isinstance(sw._find_font(), str)
+
+
 def main():
     fails = run_all()
     sys.exit(1 if fails else 0)

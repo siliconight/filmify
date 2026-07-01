@@ -151,7 +151,7 @@ def clean():
     goes back to a clean, shippable state without touching your clips."""
     removed = []
     # directories
-    for d in [DIST, ROOT / "__pycache__"] + list(ROOT.glob("sweep_*")):
+    for d in [DIST, ROOT / "__pycache__", ROOT / "references"] + list(ROOT.glob("sweep_*")):
         if d.is_dir():
             shutil.rmtree(d)
             removed.append(d.name + "/")
