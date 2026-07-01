@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.30.2"
+__version__ = "0.31.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -236,7 +236,7 @@ Try this first (15-second split-screen test of the look):
 
 Then the full workflow:
 
-    1. Dial it in     --look subtle|standard|heavy, add --bw, --weave 1.5 ...
+    1. Dial it in     --look clean|subtle|standard|heavy, add --bw, --weave 1.5 ...
     2. Save the look  --save-look myfilm.json
     3. Run the shoot  python filmify.py shoot_folder/ --look-file myfilm.json --codec prores
 
@@ -319,6 +319,17 @@ VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".m4v", ".webm", ".mts", ".mxf"}
 # and slight black lift.
 # ----------------------------------------------------------------------------
 LOOKS = {
+    # THE DEFAULT — "nobody notices the effect, but everyone feels the footage
+    # is less digital." The gentlest rung: fine grain, minimal softness, low
+    # halation on only the brightest speculars, a whisper of warmth, and a
+    # near-linear curve with a soft highlight shoulder. Skin is protected in
+    # the colour stage; no weave/leak/scratch (those live in opt-in styles).
+    "clean": dict(
+        soften=0.25, saturation=0.94, halation=0.16, halation_thresh=0.86,
+        grain=3, plate_opacity=0.22, vignette="PI/8", warmth=0.025, chroma=0.5,
+        presence=0.18,
+        curve="0/0.006 0.25/0.24 0.5/0.505 0.78/0.80 0.92/0.925 1/0.975",
+    ),
     # near-neutral mids, soft shoulder — modern digital-cinema finish
     "subtle": dict(
         soften=0.35, saturation=0.93, halation=0.22, halation_thresh=0.82,
@@ -328,10 +339,10 @@ LOOKS = {
     ),
     # contrast concentrated in the midtones — classic print-stock snap
     "standard": dict(
-        soften=0.55, saturation=0.88, halation=0.33, halation_thresh=0.78,
-        grain=7, plate_opacity=0.42, vignette="PI/6", warmth=0.06, chroma=1.2,
-        presence=0.30,
-        curve="0/0.015 0.15/0.12 0.35/0.33 0.5/0.52 0.72/0.78 0.92/0.915 1/0.955",
+        soften=0.50, saturation=0.90, halation=0.28, halation_thresh=0.80,
+        grain=6, plate_opacity=0.38, vignette="PI/6.5", warmth=0.05, chroma=1.0,
+        presence=0.26,
+        curve="0/0.012 0.15/0.125 0.35/0.34 0.5/0.515 0.72/0.77 0.92/0.918 1/0.96",
     ),
     # lifted faded blacks, contrast in the lower-mids, compressed top — vintage
     "heavy": dict(
@@ -1195,7 +1206,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <div class="fn">__FILENAME__</div>
 
   <label>Look (intensity)</label>
-  <select id="look"><option>subtle</option><option selected>standard</option><option>heavy</option><option value="nineties" hidden>nineties</option></select>
+  <select id="look"><option selected>clean</option><option>subtle</option><option>standard</option><option>heavy</option><option value="nineties" hidden>nineties</option></select>
 
   <label>Gauge</label>
   <select id="gauge"><option>16mm</option><option selected>35mm</option><option>70mm</option></select>
@@ -1204,15 +1215,15 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <select id="ratio"><option value="">source</option><option value="1.85">1.85 flat</option><option value="2.2">2.2 70mm</option><option value="2.39">2.39 Scope</option><option value="2.76">2.76 Ultra Panavision</option></select>
 
   <label>Grain <output id="grainV"></output></label>
-  <input type="range" id="grain" min="0" max="20" step="1" value="7">
+  <input type="range" id="grain" min="0" max="20" step="1" value="3">
   <label>Halation <output id="halationV"></output></label>
-  <input type="range" id="halation" min="0" max="1" step="0.01" value="0.33">
+  <input type="range" id="halation" min="0" max="1" step="0.01" value="0.16">
   <label>Soften <output id="softenV"></output></label>
-  <input type="range" id="soften" min="0" max="1.5" step="0.05" value="0.55">
+  <input type="range" id="soften" min="0" max="1.5" step="0.05" value="0.25">
   <label>Saturation <output id="saturationV"></output></label>
-  <input type="range" id="saturation" min="0" max="2" step="0.01" value="0.88">
+  <input type="range" id="saturation" min="0" max="2" step="0.01" value="0.94">
   <label>Chroma soften <output id="chroma_softenV"></output></label>
-  <input type="range" id="chroma_soften" min="0" max="3" step="0.1" value="1.2">
+  <input type="range" id="chroma_soften" min="0" max="3" step="0.1" value="0.5">
   <label>Gate weave <output id="weaveV"></output></label>
   <input type="range" id="weave" min="0" max="3" step="0.1" value="0">
   <label>Light leak <output id="leakV"></output></label>
@@ -1220,7 +1231,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <label>Anamorphic flare <output id="flareV"></output></label>
   <input type="range" id="flare" min="0" max="1" step="0.01" value="0">
   <label>Presence (anti-flat) <output id="presenceV"></output></label>
-  <input type="range" id="presence" min="0" max="1" step="0.02" value="0.3">
+  <input type="range" id="presence" min="0" max="1" step="0.02" value="0.18">
   <label>Density flicker <output id="flickerV"></output></label>
   <input type="range" id="flicker" min="0" max="1" step="0.01" value="0">
   <label>Corner softness <output id="corner_softenV"></output></label>
@@ -1300,7 +1311,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 <script>
 const $ = id => document.getElementById(id);
 const HELP = {
-  look: "Overall strength of the film treatment. 'Subtle' is a light, modern finish; 'standard' is clearly filmic; 'heavy' is a vintage, well-worn stock. Think of it as the master intensity dial.",
+  look: "Overall strength of the film treatment. 'Clean' (the default) is barely-there finishing polish; 'subtle' a light modern finish; 'standard' clearly filmic; 'heavy' a vintage, well-worn stock. Think of it as the master intensity dial.",
   gauge: "The film format. 16mm is grainier and softer (documentary / indie). 35mm is the Hollywood standard. 70mm is large-format: extremely fine grain, very clean (epics like 2001 or Dunkirk).",
   ratio: "Aspect ratio \u2014 the shape of the frame. 2.39 is modern widescreen 'Scope'; 2.2 is 70mm; 2.76 is Ultra Panavision (very wide); 1.85 is standard theatrical 'flat'. Crops your footage to that cinematic shape.",
   grain: "Film grain \u2014 the fine, organic texture of photographic emulsion. Real film grain is random and lively, unlike flat digital noise. Higher = more visible texture.",
@@ -1436,9 +1447,9 @@ function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 180); }
 document.querySelectorAll("input,select").forEach(el => {
   el.addEventListener("input", schedule); el.addEventListener("change", schedule);
 });
-const DEFAULTS = {look:"standard",gauge:"35mm",ratio:"",grain:7,halation:0.33,
-  soften:0.55,saturation:0.88,chroma_soften:1.2,weave:0,leak:0,flare:0,
-  presence:0.3,flicker:0,corner_soften:0,age:0,
+const DEFAULTS = {look:"clean",gauge:"35mm",ratio:"",grain:3,halation:0.16,
+  soften:0.25,saturation:0.94,chroma_soften:0.5,weave:0,leak:0,flare:0,
+  presence:0.18,flicker:0,corner_soften:0,age:0,
   bw:false,depth:8,codec:"h264",print_stock:"",lut:"",grain_plate:"",input_log:""};
 function styleSettings(name){
   const d = Object.assign({}, DEFAULTS, styles[name] || {});
@@ -1623,7 +1634,7 @@ def _ui_args(base, q):
     settings, on top of the launch-time args."""
     a = argparse.Namespace(**vars(base))
     fl = lambda k, d=0.0: float(q.get(k, d) or d)
-    a.look = q.get("look", "standard")
+    a.look = q.get("look", "clean")
     a.gauge = q.get("gauge", "35mm")
     a.ratio = float(q["ratio"]) if q.get("ratio") else None
     a.grain = int(float(q.get("grain", 7)))
@@ -2114,7 +2125,7 @@ def main() -> None:
                     help="output file (or output folder in batch mode)")
     ap.add_argument("-V", "--version", action="version",
                     version=f"filmify {__version__}")
-    ap.add_argument("--look", choices=LOOKS, default="standard",
+    ap.add_argument("--look", choices=LOOKS, default="clean",
                     help="overall intensity preset")
     ap.add_argument("--conform", action="store_true",
                     help="convert to 24 fps with simulated 180-degree shutter blur")

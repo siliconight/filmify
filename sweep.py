@@ -20,6 +20,7 @@ that one knob in isolation.
 """
 import argparse
 import importlib.util
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -69,19 +70,123 @@ def base_args(fm, **over):
     return _a.Namespace(**d)
 
 
+def _satavg(fm, path):
+    """Mean per-pixel saturation (ffmpeg signalstats SATAVG). Unlike the average
+    of U/V — which measures net colour CAST and cancels out on a balanced but
+    colourful frame — this measures how colourful the pixels actually are, which
+    is what 'did the look desaturate' needs."""
+    cmd = [fm.FFPROBE, "-v", "error", "-f", "lavfi",
+           "-i", f"movie={fm.fpath(path)},fps=1,signalstats",
+           "-show_entries", "frame_tags=lavfi.signalstats.SATAVG",
+           "-of", "csv=p=0"]
+    out = fm.run(cmd, capture_output=True, text=True)
+    vals = []
+    for line in out.stdout.splitlines():
+        s = line.strip().strip(",")
+        if s:
+            try:
+                vals.append(float(s))
+            except ValueError:
+                pass
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def _measure_effect(fm, clip):
+    """Render `clip` at the DEFAULT (clean) look with NO slider overrides — pure
+    preset — then return input vs output (Y, U, V, SATAVG) so we can quantify how
+    far the default moved the image."""
+    args = base_args(fm, look="clean", grain=None)  # grain=None -> use look's own
+    out = ROOT / "_check_out.mp4"
+    res = fm.render(clip, out, args)
+    if not res.get("ok"):
+        return None
+    a = fm.measure_clip(clip)
+    b = fm.measure_clip(out)
+    if not a or not b:
+        out.unlink(missing_ok=True)
+        return None
+    sa = _satavg(fm, clip)
+    sb = _satavg(fm, out)
+    out.unlink(missing_ok=True)
+    return (a[0], a[1], a[2], sa), (b[0], b[1], b[2], sb)
+
+
+def check_default(fm, clip):
+    """'Too much film effect' guard for the clean default. A premium default
+    barely moves the image: little luma drift, no global colour wash, and it
+    keeps almost all of the original saturation. Runs on a supplied clip, or on
+    synthetic references (neutral gray + colour bars) when none is given, so it
+    works with no footage on hand. Returns non-zero if any metric warns."""
+    targets = []
+    if clip and clip.exists():
+        targets.append(("your clip", clip))
+    else:
+        gray = ROOT / "_check_gray.mp4"
+        bars = ROOT / "_check_bars.mp4"
+        subprocess.run([fm.FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        "color=0x808080:s=320x180:r=24:d=1", "-c:v", "libx264",
+                        "-preset", "veryfast", str(gray)], check=True, timeout=60)
+        subprocess.run([fm.FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        "smptebars=s=320x180:r=24:d=1", "-c:v", "libx264",
+                        "-preset", "veryfast", str(bars)], check=True, timeout=60)
+        targets += [("neutral gray", gray), ("colour bars", bars)]
+
+    print("\nclean-default gentleness check  (a good default barely moves the image)\n")
+    warns = []
+
+    def mark(cond):
+        warns.append(not cond)
+        return "PASS" if cond else "WARN"
+
+    for name, path in targets:
+        m = _measure_effect(fm, path)
+        if not m:
+            print(f"  [{name}] render/measure failed"); warns.append(True); continue
+        (yi, ui, vi, sati), (yo, uo, vo, sato) = m
+        dY = yo - yi
+        cast = math.hypot(uo - ui, vo - vi)
+        sat_ratio = (sato / sati) if sati > 1e-6 else 1.0
+        print(f"  [{name}]")
+        print(f"    [{mark(abs(dY) <= 12)}] luma drift          dY = {dY:+.1f} / 255   (want |dY| <= 12)")
+        print(f"    [{mark(cast <= 6)}] global colour wash   {cast:4.1f}          (want <= 6)")
+        if sati > 8:  # retention is only meaningful on a genuinely coloured source
+            print(f"    [{mark(0.78 <= sat_ratio <= 1.10)}] saturation kept     {sat_ratio * 100:3.0f}%          (want 78-110%)")
+        else:
+            print(f"    [ -- ] saturation kept     n/a (near-neutral source)")
+        print()
+        if path.name.startswith("_check_"):
+            path.unlink(missing_ok=True)
+
+    if any(warns):
+        print("some metrics WARN — the clean default may be too strong; dial it back.")
+        return 1
+    print("all gentle \u2713  — the clean default reads as finishing polish, not a filter.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("clip", type=Path)
+    ap.add_argument("clip", type=Path, nargs="?")
     ap.add_argument("--param", help="sweep just one parameter")
     ap.add_argument("--frames", action="store_true",
                     help="also export a still PNG per value")
+    ap.add_argument("--check", action="store_true",
+                    help="measure whether the DEFAULT (clean) look stays gentle "
+                         "on a clip (or synthetic refs if no clip is given)")
     a = ap.parse_args()
 
+    fm = load()
+
+    if a.check:
+        return check_default(fm, a.clip)
+
+    if a.clip is None:
+        print("give a clip to sweep, or use --check")
+        return 1
     if not a.clip.exists():
         print(f"clip not found: {a.clip}")
         return 1
 
-    fm = load()
     params = [a.param] if a.param else list(SWEEPS)
     for p in params:
         if p not in SWEEPS:

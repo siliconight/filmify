@@ -105,7 +105,8 @@ folder — whichever comes first.
 python filmify.py myfootage.mp4
 ```
 
-That's it — you get `myfootage_film.mp4` with the standard look.
+That's it — you get `myfootage_film.mp4` with the clean look (subtle finishing
+polish). Want more film? Add `--look subtle`, `--look standard`, or `--look heavy`.
 
 Shot on a phone at 60 fps? Conform it to 24 fps with proper motion blur:
 
@@ -292,6 +293,7 @@ always override the file.
 
 | Preset     | Feel                                          |
 |------------|-----------------------------------------------|
+| `clean`    | **Default.** Finishing polish — barely noticed. |
 | `subtle`   | Barely-there. Modern digital cinema finish.    |
 | `standard` | Clearly filmic without drawing attention.      |
 | `heavy`    | Vintage stock — soft, grainy, faded blacks.    |

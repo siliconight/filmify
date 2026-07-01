@@ -127,6 +127,16 @@ def run_all():
             ok = False
         check(f"filtergraph builds: style {style}", ok)
 
+    # 3b. Filtergraph builds for every LOOK, including the clean default
+    for look in fm.LOOKS:
+        a = base_args(look=look)
+        try:
+            g = fm.build_filtergraph(a, info)
+            ok = bool(g) and "[vout]" in g
+        except Exception:  # noqa: BLE001
+            ok = False
+        check(f"filtergraph builds: look {look}", ok)
+
     # 4. Renders succeed AND aren't magenta (the 10-bit bug)
     for depth in (8, 10):
         out = ROOT / f"_smoke_out{depth}.mp4"

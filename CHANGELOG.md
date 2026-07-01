@@ -3,6 +3,40 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.31.0] — 2026-07-01
+
+### Added
+- **A new `clean` look — now the default.** The gentlest rung on the intensity
+  ladder and the new starting point for `python filmify.py clip.mp4` and the
+  panel: fine grain (3), minimal softness, low halation on only the brightest
+  speculars, a whisper of warmth, a near-linear curve with a soft highlight
+  shoulder, and skin protected in the colour stage. The design goal is "nobody
+  notices the effect, but everyone feels the footage is less digital" — filmify
+  as finishing polish, not a filter. Heavy grain, leaks, scratches, weave, and
+  flare stay exactly where they were: opt-in styles.
+- **`sweep.py --check`** — a "too much film effect" guard. Renders a clip (or
+  synthetic neutral-gray + colour-bars references if you don't pass one) through
+  the clean default and reports whether it stayed gentle: luma drift, global
+  colour wash, and how much of the original saturation survived, each as
+  PASS/WARN against premium-default thresholds. Non-zero exit if anything warns.
+
+### Changed
+- **The intensity ladder is now `clean → subtle → standard → heavy`.** `clean`
+  is the default; the other three are explicit opt-ins for more film.
+- **`standard` dialled back a notch.** Since it's no longer the silent default
+  but a deliberate "I want it clearly filmic" choice, it's slightly gentler:
+  soften 0.55 → 0.50, halation 0.33 → 0.28, grain 7 → 6, chroma-soften 1.2 →
+  1.0, presence 0.30 → 0.26, plus a marginally softer tone curve. `subtle` and
+  `heavy` are unchanged. Note styles built on `standard` (`anamorphic`,
+  `blockbuster`) inherit the gentler numbers.
+- **Panel and CLI defaults kept in lockstep.** The panel's initial slider
+  positions (which are set from HTML, not the JS defaults) and the JS reset
+  baseline were both synced to `clean`, so the UI and `--look` no longer drift.
+
+### Tests
+- Smoke test now builds a filtergraph for every LOOK (not just every style),
+  so the `clean` default is covered by CI.
+
 ## [0.30.2] — 2026-07-01
 
 ### Fixed
