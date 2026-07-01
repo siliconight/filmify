@@ -3,6 +3,35 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.34.1] — 2026-07-01
+
+### Fixed
+- **Every real render crashed at the report step.** Two CSS rules inside the
+  `write_report()` f-string (`#helppop{…}` and `.hq{…}`) used single braces
+  where every neighbouring rule uses doubled `{{ }}`, so Python read them as
+  replacement fields and `main()` raised `NameError: name 'display' is not
+  defined` right after "done." The smoke suite missed it because it calls
+  `render()` directly and never hits `main()`/`write_report()`. Braces doubled;
+  a new smoke check now exercises `write_report()` on a real result.
+- **CI hung for 10 minutes on macOS and Linux.** The panel banner
+  (`filmify panel: <url>`) was printed without `flush`, so on a non-TTY runner
+  it sat block-buffered and the test's readiness `readline()` blocked forever
+  waiting for a line that never arrived (the 20s guard couldn't fire from
+  inside a blocking read). The banner now flushes, the panel child launches
+  unbuffered (`-u`), and the readiness wait reads on a background thread so the
+  deadline is always enforced. Windows was unaffected and already passed.
+- **Windows CI failed `bash -n` on the shell launchers.** A CRLF checkout made
+  Git-Bash choke on stray carriage returns. `.gitattributes` now pins `*.sh` to
+  LF (it already pinned `*.command`), and `test_shell_launchers_parse`
+  normalizes line endings before parsing so a CRLF checkout can't cause a false
+  failure while still catching genuine syntax errors.
+- **Scratch launchers were committed by accident.** `filmify-drop.bat`
+  (non-ASCII em-dash → failed the .bat ASCII check) and `filmify-drop.command`
+  were local scratch swept in by `git add -A`. They're now git-ignored.
+- **Panel previews are bounded.** `preview_jpeg()`'s single-frame ffmpeg call
+  gained a 90-second timeout so a stalled preview surfaces an error instead of
+  hanging the panel thread.
+
 ## [0.34.0] — 2026-07-01
 
 ### Changed

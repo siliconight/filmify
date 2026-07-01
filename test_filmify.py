@@ -185,6 +185,17 @@ def run_all():
         neutral = px is not None and abs(px[0] - px[1]) < 40 and abs(px[1] - px[2]) < 40
         check(f"{depth}-bit output is not magenta", neutral, f"pixel={px}")
 
+    # 4b. The report renders. write_report() is one enormous f-string; a stray
+    #     single brace turns a CSS rule into a NameError that only fires on a
+    #     real run (render() alone never calls it), so exercise it directly.
+    try:
+        rep = ROOT / "_smoke_report.html"
+        fm.write_report([res], a, rep)
+        check("write_report builds the HTML report",
+              rep.exists() and rep.stat().st_size > 0)
+    except Exception as exc:  # noqa: BLE001
+        check("write_report builds the HTML report", False, repr(exc))
+
     # 5. Panel server is structurally sound — class Handler exists in run_ui
     #    and resolves. This catches NameError-at-startup bugs (like a severed
     #    class def) WITHOUT needing a live socket, so it's reliable in CI.
@@ -209,18 +220,41 @@ def run_all():
     _grp = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
             if os.name == "nt" else {"start_new_session": True})
     proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "filmify.py"), str(clip), "--ui"],
+        [sys.executable, "-u", str(ROOT / "filmify.py"), str(clip), "--ui"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **_grp)
     url = None
+    # Read the child's stdout on a background thread so the 20s deadline below
+    # is real: a blocking readline() on a buffered (or ffmpeg-held-open) pipe
+    # would otherwise defeat the wall-clock guard and hang the whole job.
+    import queue as _queue
+    import threading as _threading
+    _lines = _queue.Queue()
+
+    def _pump(pipe):
+        try:
+            while True:
+                ln = pipe.readline()
+                if not ln:
+                    break
+                _lines.put(ln)
+        finally:
+            _lines.put(None)  # sentinel: pipe closed / EOF
+
+    _reader = _threading.Thread(target=_pump, args=(proc.stdout,), daemon=True)
+    _reader.start()
     try:
         start = time.time()
         while time.time() - start < 20:
-            line = proc.stdout.readline()
-            if not line:
+            try:
+                line = _lines.get(timeout=0.5)
+            except _queue.Empty:
                 if proc.poll() is not None:
                     panel_err = "process exited before serving"
                     break
                 continue
+            if line is None:
+                panel_err = panel_err or "process exited before serving"
+                break
             m = re.search(r"http://127\.0\.0\.1:\d+/", line)
             if m:
                 url = m.group(0)

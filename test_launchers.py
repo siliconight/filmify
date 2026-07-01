@@ -24,10 +24,21 @@ def shell_launchers():
 
 
 def test_shell_launchers_parse():
-    """Every launcher must be syntactically valid bash."""
+    """Every launcher must be syntactically valid bash.
+
+    Line endings are normalized to LF before parsing and the script is fed on
+    stdin: these are Unix launchers, and a CRLF checkout on Windows (Git-Bash)
+    would otherwise make `bash -n` choke on a stray \\r rather than on any real
+    syntax error. .gitattributes keeps the shipped files LF; this makes the
+    test robust regardless of how a given machine checked them out."""
+    if not shutil.which("bash"):
+        import pytest
+        pytest.skip("bash not available")
     bad = []
     for f in shell_launchers():
-        r = subprocess.run(["bash", "-n", str(f)], capture_output=True, text=True)
+        text = f.read_text().replace("\r\n", "\n").replace("\r", "\n")
+        r = subprocess.run(["bash", "-n"], input=text,
+                           capture_output=True, text=True)
         if r.returncode != 0:
             bad.append(f"{f.name}: {r.stderr.strip()}")
     assert not bad, "bash -n failed:\n" + "\n".join(bad)

@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.34.0"
+__version__ = "0.34.1"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1273,8 +1273,8 @@ h1{{font-weight:600;font-size:1.4rem;margin:0}}
 figure{{margin:0;flex:1;min-width:260px}}
 img{{width:100%;border-radius:6px;display:block}}
 figcaption{{color:#a89f90;font-size:.8rem;margin-top:.25rem;text-transform:uppercase;letter-spacing:.06em}}
-p{{color:#cfc7ba;margin:.5rem 0 0}}#helppop{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}
-.hq{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}.hq:hover{border-color:var(--acc);color:var(--acc)}
+p{{color:#cfc7ba;margin:.5rem 0 0}}#helppop{{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}}
+.hq{{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}}.hq:hover{{border-color:var(--acc);color:var(--acc)}}
 </style></head><body>
 <div id="helppop"></div>
 <h1>filmify {e(__version__)} &mdash; {ok_n}/{len(results)} clip{"s" if len(results) != 1 else ""} processed</h1>
@@ -1966,7 +1966,10 @@ def run_ui(args) -> None:
             cmd += ["-stream_loop", "-1", "-i", str(a.grain_plate)]
         cmd += ["-filter_complex", graph, "-map", "[vout]", "-frames:v", "1",
                 "-f", "image2", "-c:v", "mjpeg", "-q:v", "4", "pipe:1"]
-        out = run(cmd, capture_output=True)
+        try:
+            out = run(cmd, capture_output=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("preview timed out (ffmpeg did not return in 90s)")
         if out.returncode != 0 or not out.stdout:
             raise RuntimeError(out.stderr.decode("utf-8", "replace")[-400:])
         return out.stdout
@@ -2204,8 +2207,8 @@ def run_ui(args) -> None:
 
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
-    print(f"filmify panel: {url}")
-    print("(Ctrl+C here closes it, or just close the browser tab)")
+    print(f"filmify panel: {url}", flush=True)
+    print("(Ctrl+C here closes it, or just close the browser tab)", flush=True)
     try:
         webbrowser.open(url)
     except Exception:  # noqa: BLE001

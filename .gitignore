@@ -14,3 +14,6 @@ sweep_*/
 /filmify-mac.zip
 /filmify-windows.zip
 _smoke_*
+# local scratch drag-and-drop launchers — not shipped, must never be tracked
+filmify-drop.bat
+filmify-drop.command
