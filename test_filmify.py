@@ -22,6 +22,13 @@ import time
 import urllib.request
 from pathlib import Path
 
+# On a cp1252 console (Windows CI) a stray non-ASCII glyph in a print() raises
+# UnicodeEncodeError and can sink an otherwise-green run. Make stdout tolerant.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 ROOT = Path(__file__).resolve().parent
 FAILS = []
 PASSES = []
@@ -149,9 +156,18 @@ def run_all():
           "full" in fm.source_normalize(dict(std_src, color_range="pc"), na))
     check("normalize: yuvj full-range engages",
           fm.source_normalize(dict(std_src, pix_fmt="yuvj420p"), na) != "")
-    check("normalize: non-709 primaries engages",
-          "2020" in fm.source_normalize(
-              dict(std_src, color_primaries="bt2020", color_space="bt2020nc"), na))
+    # Non-709 primaries: what "correct" means depends on the ffmpeg build.
+    # Remapping primaries needs zimg/zscale; builds without it (e.g. Homebrew
+    # ffmpeg) genuinely can't, so source_normalize honestly leaves a
+    # limited-range clip alone rather than faking a conversion. Assert the
+    # contract that actually applies to THIS build so CI is stable everywhere.
+    prim_out = fm.source_normalize(
+        dict(std_src, color_primaries="bt2020", color_space="bt2020nc"), na)
+    if fm.has_filter("zscale"):
+        check("normalize: non-709 primaries engages (zscale)", "2020" in prim_out)
+    else:
+        check("normalize: non-709 primaries left alone without zscale",
+              prim_out == "")
     check("normalize: HDR is left to the tonemap stage",
           fm.source_normalize(dict(std_src, hdr=True), na) == "")
 
@@ -332,7 +348,7 @@ def run_all():
     if FAILS:
         print("FAILED:", ", ".join(FAILS))
     else:
-        print("all green ✓")
+        print("all green")
     return list(FAILS)
 
 

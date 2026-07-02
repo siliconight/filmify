@@ -37,10 +37,14 @@ def test_shell_launchers_parse():
     bad = []
     for f in shell_launchers():
         text = f.read_text().replace("\r\n", "\n").replace("\r", "\n")
-        r = subprocess.run(["bash", "-n"], input=text,
-                           capture_output=True, text=True)
+        # Feed raw bytes, not text=True. With text=True, subprocess wraps stdin
+        # in a TextIOWrapper whose default newline handling translates every \n
+        # back to os.linesep on write -- i.e. re-inserts \r\n on Windows, which
+        # undid the normalization above and made Git-Bash choke on the CRs.
+        r = subprocess.run(["bash", "-n"], input=text.encode("utf-8"),
+                           capture_output=True)
         if r.returncode != 0:
-            bad.append(f"{f.name}: {r.stderr.strip()}")
+            bad.append(f"{f.name}: {r.stderr.decode('utf-8', 'replace').strip()}")
     assert not bad, "bash -n failed:\n" + "\n".join(bad)
 
 

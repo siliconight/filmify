@@ -3,6 +3,31 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.34.2] — 2026-07-02
+
+### Fixed
+- **Windows CI died the instant the suite went green.** The smoke summary
+  printed `all green ✓`, and on a cp1252 console (which is what a redirected
+  Windows runner gets) the `✓` can't be encoded, so `print()` raised
+  `UnicodeEncodeError` *after* all 36 checks had already passed. The victory
+  line is now pure ASCII, and `test_filmify.py` reconfigures stdout to UTF-8
+  (`errors="replace"`) at import so no stray glyph can ever sink a green run.
+- **Windows CI failed `bash -n` on the shell launchers — the CRLF fix was
+  being undone on the way to bash.** `test_shell_launchers_parse` normalizes
+  each launcher to LF, then fed it to `bash -n` on stdin with `text=True`. But
+  `text=True` wraps stdin in a `TextIOWrapper` whose default newline handling
+  translates every `\n` back to `os.linesep` *on write* — i.e. it re-inserted
+  `\r\n` on Windows, so Git-Bash choked on the carriage returns. The script is
+  now fed as raw UTF-8 **bytes**, byte-identical to the LF stream macOS already
+  parses clean, so no re-translation can happen.
+- **macOS CI failed `normalize: non-709 primaries engages`.** The check
+  asserted a zscale-specific output substring, but Homebrew's ffmpeg is built
+  without libzimg, so it has no `zscale` filter. Remapping primaries genuinely
+  requires zimg, so on that build `source_normalize()` correctly leaves a
+  limited-range clip alone rather than faking a conversion it can't do — which
+  is exactly what the check now asserts, keyed on `has_filter("zscale")`, so it
+  verifies the real per-build contract on both zimg and non-zimg ffmpeg.
+
 ## [0.34.1] — 2026-07-01
 
 ### Fixed
