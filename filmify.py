@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.34.2"
+__version__ = "0.35.0"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -1322,6 +1322,9 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 #rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
 #helppop{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}
 .hq{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}.hq:hover{border-color:var(--acc);color:var(--acc)}
+details.adv{margin:8px 0 2px;border-top:1px solid var(--line);padding-top:6px}
+details.adv>summary{cursor:pointer;color:var(--acc);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:3px 0;user-select:none}
+details.adv[open]>summary{margin-bottom:2px}
 </style></head><body>
 <div id="helppop"></div>
 <div id="side">
@@ -1335,7 +1338,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <select id="gauge"><option>16mm</option><option selected>35mm</option><option>70mm</option></select>
 
   <label>Aspect ratio</label>
-  <select id="ratio"><option value="">source</option><option value="1.85">1.85 flat</option><option value="2.2">2.2 70mm</option><option value="2.39">2.39 Scope</option><option value="2.76">2.76 Ultra Panavision</option></select>
+  <select id="ratio"><option value="">source</option><option value="1.33">1.33 4:3</option><option value="1.85">1.85 flat</option><option value="2.2">2.2 70mm</option><option value="2.39">2.39 Scope</option><option value="2.76">2.76 Ultra Panavision</option></select>
 
   <label>Grain <output id="grainV"></output></label>
   <input type="range" id="grain" min="0" max="20" step="1" value="3">
@@ -1345,6 +1348,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <input type="range" id="soften" min="0" max="1.5" step="0.05" value="0.25">
   <label>Saturation <output id="saturationV"></output></label>
   <input type="range" id="saturation" min="0" max="2" step="0.01" value="0.94">
+  <details class="adv"><summary>More texture &amp; optics</summary>
   <label>Chroma soften <output id="chroma_softenV"></output></label>
   <input type="range" id="chroma_soften" min="0" max="3" step="0.1" value="0.5">
   <label>Gate weave <output id="weaveV"></output></label>
@@ -1361,6 +1365,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
   <input type="range" id="corner_soften" min="0" max="3" step="0.1" value="0">
   <label>Aged print <output id="ageV"></output></label>
   <input type="range" id="age" min="0" max="1" step="0.01" value="0">
+  </details>
 
   <div class="checks">
     <label><input type="checkbox" id="bw"> B&amp;W</label>
@@ -1371,6 +1376,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
     <label><input type="checkbox" id="depth10"> 10-bit</label>
   </div>
 
+  <details class="adv"><summary>Color &amp; source</summary>
   <label>Develop log footage</label>
   <select id="input_log"><option value="">none (Rec.709 source)</option><option value="slog3">S-Log3 (Sony)</option><option value="vlog">V-Log (Panasonic)</option><option value="cineon">Cineon (generic)</option></select>
 
@@ -1382,6 +1388,7 @@ hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 
   <label>Grain plate (video path, optional)</label>
   <input type="text" id="grain_plate" placeholder="leave empty for synthesized">
+  </details>
 
   <hr>
   <label>Codec for full render</label>
@@ -2237,6 +2244,15 @@ def run_ui(args) -> None:
 
 
 def main() -> None:
+    # Status output uses a few non-ASCII glyphs. On a Windows console under a
+    # legacy code page (cp1252) those raise UnicodeEncodeError the moment stdout
+    # is redirected or piped, taking the whole render down at the finish line.
+    # Make output tolerant instead of fragile.
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     if len(sys.argv) == 1:
         print(QUICKSTART)
         return

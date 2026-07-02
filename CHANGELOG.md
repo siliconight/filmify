@@ -3,6 +3,33 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.35.0] — 2026-07-02
+
+### Changed
+- **Panel controls now lead with the basics.** The two most-used fine-tune
+  sliders after picking a style — plus Look, Gauge, Aspect ratio, Grain,
+  Halation, Soften and Saturation — stay visible, while the eight esoteric
+  texture/optics sliders (chroma soften, gate weave, light leak, anamorphic
+  flare, presence, density flicker, corner softness, aged print) and the
+  color/source controls (log develop, print stock, LUT, grain plate) collapse
+  into two "advanced" disclosures. A first-timer sees a short, legible panel;
+  the full control surface is one click away and nothing was removed. (The
+  style gallery and per-control "?" help were already there — this just stops
+  the sliders from burying them.)
+
+### Fixed
+- **`super8` and `newsreel` styles now apply their 1.33 crop in the panel.**
+  Both set a 1.33 (4:3) aspect ratio, but the panel's ratio dropdown had no
+  1.33 option, so selecting either style silently left the frame uncropped.
+  Added the 1.33 option; the styles now round-trip through the UI.
+- **The CLI no longer crashes on its own status output under a legacy Windows
+  code page.** `main()` prints a few non-ASCII glyphs (the done check, a batch
+  arrow, an ellipsis); on cp1252 those raised `UnicodeEncodeError` the moment
+  stdout was redirected or piped, killing the render at the summary line.
+  stdout/stderr are now reconfigured to UTF-8 with `errors="replace"`, so
+  output degrades gracefully instead of taking the render down. Same class of
+  bug fixed in the test suite in 0.34.2, now closed in the shipping tool.
+
 ## [0.34.2] — 2026-07-02
 
 ### Fixed
