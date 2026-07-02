@@ -3,6 +3,42 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.35.2] — 2026-07-02
+
+### Fixed
+- **Windows CI: the shell-launcher lint now uses a bash that can actually
+  lint, instead of failing on the WSL stub.** The Windows runner has Git for
+  Windows installed, but `shutil.which("bash")` resolves to
+  `C:\Windows\System32\bash.exe` first -- the WSL launcher, which with no
+  distro exits nonzero with its message on stdout and empty stderr (the exact
+  failure in the logs) regardless of input. That's why fixing the *input*
+  (0.34.1 CRLF-normalize, 0.34.2 feed-bytes) never helped. The test now probes
+  candidate bashes and falls back to Git-Bash (located from `git`), giving
+  Windows real shell-syntax coverage; it skips only if no bash on the runner
+  can lint at all. Supersedes 0.35.1's probe-and-skip, which would have gone
+  green by skipping rather than actually linting.
+- **Launchers are read as bytes, not cp1252 text.** All three mac launchers
+  contain UTF-8 (em dash, ellipsis, arrow); `f.read_text()` decodes them under
+  the process locale, which is cp1252 on Windows and would mangle them before
+  linting. Reading raw bytes and normalizing line endings on bytes feeds
+  Git-Bash exactly what's on disk. The interpreter-guard test now reads UTF-8
+  explicitly for the same reason. All bash calls are timeout-guarded.
+
+## [0.35.1] — 2026-07-02
+
+### Fixed
+- **Windows CI: shell-launcher lint no longer fails on a bash that can't
+  lint.** The 0.34.1 (CRLF normalize) and 0.34.2 (feed bytes) fixes both
+  targeted the *input* to `bash -n`, but the input was never the problem: the
+  original failure had empty stderr, which CRLF never produces. On the runner,
+  `shutil.which("bash")` resolves to a bash that exits nonzero with its message
+  on stdout (a WSL stub with no distro, or a shim) regardless of input. The
+  test now sanity-probes bash on a trivial script first and skips — with a
+  printed diagnostic naming the resolved bash and its version — when it can't
+  lint. Real syntax-error coverage remains on the macOS and Linux jobs, and
+  genuine errors still fail there. Calls are timeout-guarded so a stub that
+  hangs can't stall CI.
+
 ## [0.35.0] — 2026-07-02
 
 ### Changed

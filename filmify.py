@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.35.0"
+__version__ = "0.35.2"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
