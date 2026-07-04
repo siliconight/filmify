@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.35.2"
+__version__ = "0.35.3"
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -941,12 +941,14 @@ def build_filtergraph(args, info: dict) -> str:
             f"colorlevels=rimin=0.62:gimin=0.62:bimin=0.62,"
             f"scale={w_px}:{h_px}:flags=bilinear,gblur=sigma=0.6,"
             f"format={rgbfmt}[dust];"
-            # scratch layer: static line on a wider canvas, crop position
-            # drifts; visibility gated to a brief window every ~9 s
-            f"color=c=black:s={w_px + 240}x{h_px}:r={out_fps:g},"
-            f"drawbox=x={(w_px + 240) // 2}:y=0:w=2:h={h_px}:color=0x9A9A9A:t=fill,"
-            f"crop={w_px}:{h_px}:x='120+85*sin(t*0.67)+45*sin(t*1.93)':y=0,"
-            f"hue=b='if(lt(mod(t,9.2),1.3),0,-12)',"
+            # scratch layer: a thin vertical scratch that wanders in the
+            # left-of-centre region -- never dead-centre, which reads as an A/B
+            # split line rather than film damage -- and is visible only ~1.3 s
+            # out of every ~9.2 s. Phased so the t=0 preview frame is clean.
+            f"color=c=black:s={w_px}x{h_px}:r={out_fps:g},"
+            f"drawbox=x='iw*(0.24+0.09*sin(t*0.53)+0.05*sin(t*1.73))'"
+            f":y=0:w=2:h=ih:color=0x9A9A9A:t=fill,"
+            f"hue=b='if(lt(mod(t+4.6,9.2),1.3),0,-12)',"
             f"format={rgbfmt}[scr];"
             f"[dust][scr]blend=all_mode=screen:shortest=1[dmg];"
             f"{cur}format={rgbfmt}[agebase];"

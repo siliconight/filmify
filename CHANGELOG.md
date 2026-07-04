@@ -3,6 +3,20 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.35.3] — 2026-07-02
+
+### Fixed
+- **Aged Print no longer draws a fixed line down the centre of the frame.** The
+  aged-print scratch was authored to wander within a +/-120px band centred on
+  the middle and gated to a brief flash every ~9 s; but the wander term is 0 at
+  t=0, so the panel's preview frame froze the scratch dead-centre with its
+  visibility gate open -- a 2px line straight down the middle that read as the
+  A/B-split divider rather than film damage. The scratch now wanders in the
+  left-of-centre region (never crossing the middle) and is phased so the t=0
+  preview frame is clean; it flashes briefly, off-centre, during playback as
+  intended. Also removed the old wide-canvas crop, whose x expression could
+  drift out of bounds.
+
 ## [0.35.2] — 2026-07-02
 
 ### Fixed
