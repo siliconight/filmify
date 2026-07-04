@@ -6,7 +6,7 @@
 
 ## Download
 
-**[⬇ filmify for Mac](https://github.com/siliconight/filmify/raw/master/filmify-mac.zip)** &nbsp;·&nbsp; **[⬇ filmify for Windows](https://github.com/siliconight/filmify/raw/master/filmify-windows.zip)**
+**[⬇ filmify for Mac](https://github.com/siliconight/filmify/releases/latest/download/filmify-mac.zip)** &nbsp;·&nbsp; **[⬇ filmify for Windows](https://github.com/siliconight/filmify/releases/latest/download/filmify-windows.zip)**
 
 Unzip, then double-click **Start filmify**. That's it — filmify opens in your browser. (First launch only: Mac → right-click Start filmify → Open; Windows → "More info" → "Run anyway". One time.)
 

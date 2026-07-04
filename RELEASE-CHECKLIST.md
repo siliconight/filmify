@@ -52,7 +52,11 @@ chips dead while dropdown ones worked, etc.), so click through them:
 
 ## Publishing
 - [ ] `python test_filmify.py` is green locally
-- [ ] `python build-packages.py` run; `filmify-mac.zip` / `filmify-windows.zip` refreshed at repo root
 - [ ] CHANGELOG top entry matches `__version__`
-- [ ] Commit, tag `vX.Y.Z`, push with `--tags`
-- [ ] GitHub release updated: tag, both zips attached, description current
+- [ ] Commit, tag `vX.Y.Z`, push the tag (`git push origin vX.Y.Z`)
+- [ ] The `release` workflow builds the packages (into `dist/`) and attaches
+      `filmify-mac.zip` / `filmify-windows.zip` to the GitHub Release
+      automatically. Confirm the run is green and the release is marked
+      **Latest**, so the two README download links resolve.
+      (By hand instead: `python build-packages.py` then
+      `gh release create vX.Y.Z dist/filmify-mac.zip dist/filmify-windows.zip --title "filmify vX.Y.Z" --latest`.)

@@ -1,0 +1,75 @@
+name: release
+
+# Publishes a GitHub Release whenever a version tag is pushed. The README's
+# download buttons point at
+#   https://github.com/siliconight/filmify/releases/latest/download/filmify-{mac,windows}.zip
+# which only resolve once a release exists with those exact asset names -- so
+# this workflow builds the packages and attaches them, keeping the two links
+# live for every release without committing binaries to the repo.
+#
+# Cut a release:  git tag vX.Y.Z && git push origin vX.Y.Z
+# (workflow_dispatch also lets you re-run against an existing tag from the UI.)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.35.2"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build + publish packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # For a manual run, check out the requested tag; for a tag push,
+          # the default checkout is already the tag.
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve tag
+        id: tag
+        run: echo "name=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — version tag matches __version__
+        run: |
+          ver="$(python filmify.py --version | awk '{print $NF}')"
+          tag="${{ steps.tag.outputs.name }}"
+          if [ "v$ver" != "$tag" ]; then
+            echo "::error::tag $tag does not match filmify __version__ v$ver"
+            exit 1
+          fi
+          echo "tag $tag matches __version__ $ver"
+
+      - name: Build packages
+        run: python build-packages.py
+
+      - name: Verify both zips exist
+        run: |
+          test -f dist/filmify-mac.zip
+          test -f dist/filmify-windows.zip
+          ls -l dist/*.zip
+
+      - name: Publish release with both zips
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.name }}"
+          gh release create "$tag" \
+            dist/filmify-mac.zip dist/filmify-windows.zip \
+            --title "filmify $tag" \
+            --notes "See CHANGELOG.md for what changed in this release." \
+            --verify-tag --latest \
+            || gh release upload "$tag" \
+                 dist/filmify-mac.zip dist/filmify-windows.zip --clobber
