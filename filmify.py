@@ -49,6 +49,7 @@ import base64
 import datetime
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -57,7 +58,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.41.0"
+__version__ = "0.42.1"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -661,14 +662,15 @@ def _setup_photochemical(args, ap) -> None:
     prt_id, lights, transfer = args._pc_flags
 
     # Remaining legacy look knobs have no home in this chain yet — each
-    # returns at its PHYSICAL stage in a later milestone (weave at
-    # camera/projector, damage at presentation, softness split between
-    # camera and scanner...). Ignoring one silently would be a lie, so say
-    # it once, plainly. halation/grain/gauge left this list in 0.38.0.
-    legacy_only = ("look", "soften", "saturation",
-                   "chroma_soften", "plate_opacity", "grain_plate", "weave",
-                   "leak", "flare", "presence", "flicker", "corner_soften",
-                   "age", "bw", "no_curve", "no_vignette",
+    # returns at its PHYSICAL stage in a later milestone (damage at
+    # presentation, leak/flare in exposure, presence at the scan...).
+    # Ignoring one silently would be a lie, so say it once, plainly.
+    # halation/grain/gauge left this list in 0.38.0; soften (camera),
+    # weave/flicker/vignette (projection) left it in 0.42.0.
+    legacy_only = ("look", "saturation",
+                   "chroma_soften", "plate_opacity", "grain_plate",
+                   "leak", "flare", "presence", "corner_soften",
+                   "age", "bw", "no_curve",
                    "no_protect_skin", "match")
     ignored = [k for k in legacy_only
                if getattr(args, k, None) != ap.get_default(k)]
@@ -783,6 +785,8 @@ def _setup_photochemical(args, ap) -> None:
             n[0] = (n[0] or 0) + 1
             print(f"  {n[0]:2d}. {text}")
         print("photochemical stages (composed transforms noted):")
+        step("CAMERA: ratio framing, 24fps conform, lens softness   "
+             "ffmpeg prefix, before exposure")
         step("source normalize               conditional ffmpeg prefix")
         if hal_on:
             step(f"{transfer} decode -> LINEAR exposure   composed into "
@@ -806,6 +810,8 @@ def _setup_photochemical(args, ap) -> None:
         step("printer matrix + print curves     composed into print LUT")
         step("print density -> projection -> display encode   "
              "composed into print LUT")
+        step("PROJECTION: gate weave, lamp flicker, lens vignette   "
+             "ffmpeg, on the finished print")
         print(f"  LUT resolution {size}^3, tetrahedral; "
               "working format gbrp16le")
         for k in ("neg_lut", "exp_lut", "shaper_lut", "resp_lut", "print_lut"):
@@ -816,13 +822,21 @@ def _setup_photochemical(args, ap) -> None:
 
 
 def build_photochemical_graph(args, info: dict) -> str:
-    """The photochemical filtergraph. Conditional normalize, 16-bit planar
-    RGB, then the film process in its physical order: exposure (halation
-    spreads HERE, before the negative curve compresses and colors it) ->
-    negative density (grain perturbs HERE, masked by density, before the
-    print sees it) -> print -> optional user output LUT -> final format.
-    Weave, damage and softness arrive at their stages in later milestones —
-    resist the urge to bolt legacy filters onto this chain."""
+    """The photochemical filtergraph — filmify's main path, in the physical
+    order a frame actually lives through:
+
+      CAMERA/LENS   ratio framing, 24 fps conform, lens softness — what
+                    happens to the light before it reaches the negative
+      DEVELOP       exposure (halation spreads HERE, in linear light, before
+                    the negative curve compresses and colors it) -> negative
+                    density (grain perturbs HERE, masked by density, before
+                    the print sees it) -> printer lights -> print stock
+      PROJECTION    gate weave, lamp/print flicker, projection-lens vignette
+                    — what happens to the finished print
+
+    Everything else in filmify follows around this chain at its physical
+    stage; legacy-only knobs that approximate what DEVELOP now does
+    physically (tone curve, colour discipline) are replaced, not ported."""
     pc = args._pc
     pre = []
     w_px, h_px = info["width"], info["height"]
@@ -854,6 +868,13 @@ def build_photochemical_graph(args, info: dict) -> str:
     if norm:
         head.append(norm)
     head.append("format=gbrp16le")
+    # -- CAMERA / LENS stage: everything that happens to the light BEFORE it
+    #    reaches the negative. Ratio (projection framing is chosen at the
+    #    camera too) and conform live in `pre` above; lens softness lives
+    #    here — diffusion happens through glass, so it precedes exposure.
+    if args.soften and args.soften > 0:
+        head.append(f"unsharp=luma_msize_x=7:luma_msize_y=7:"
+                    f"luma_amount=-{args.soften:.2f}")
     prefix = "[0:v]" + ",".join(pre + head)
     graph = ""
     hal, grain = pc["hal"], pc["grain"]
@@ -1060,6 +1081,34 @@ def build_photochemical_graph(args, info: dict) -> str:
             f"lut3d=file={fpath(pc['print_lut'])}:interp=tetrahedral")
         if args.lut:
             tail.append(f"lut3d=file={fpath(args.lut)}")
+
+    # -- PROJECTION / PRESENTATION stages: everything that happens to the
+    #    finished print. Only when a print exists (not on the debug stages —
+    #    a negative on a light table doesn't weave or vignette). Physical
+    #    order: transport (gate weave) -> lamp/print breathing (flicker) ->
+    #    projection lens (vignette).
+    if args.debug_stage is None:
+        if args.weave and args.weave > 0:
+            a = args.weave
+            m = max(2, int(a * 1.6) + 1)
+            tail.append(
+                f"crop=w=iw-{2 * m}:h=ih-{2 * m}:"
+                f"x='{m}+{a:.2f}*sin(n/9.1)+{a / 2:.2f}*sin(n/3.7)':"
+                f"y='{m}+{a * 0.7:.2f}*sin(n/7.3)+{a / 2:.2f}*sin(n/2.9)'")
+            tail.append(f"scale={cw}:{ch},setsar=1")
+        if args.flicker and args.flicker > 0:
+            a = args.flicker * 0.16
+            tail.append(
+                f"hue=b='{a:.3f}*(0.6*sin(t*7.3)+0.4*sin(t*13.7)"
+                f"+0.3*sin(t*2.9))'")
+        # Lens vignette is OPT-IN here: the develop chain is film physics,
+        # and corner falloff is a lens artifact — not something the film
+        # process produces. --vignette 0-1 maps to a gentle..strong angle.
+        vig = getattr(args, "vignette", None)
+        if vig and vig > 0:
+            s = min(1.0, vig)
+            angle = math.pi / 8 + s * (math.pi / 5 - math.pi / 8)
+            tail.append(f"vignette=angle={angle:.4f}")
 
     if args.depth == 10:
         ofmt = ("yuv422p10le" if args.codec in ("prores", "dnxhr")
@@ -1445,16 +1494,25 @@ def build_filtergraph(args, info: dict) -> str:
         cur = "[aged]"
 
     # -- 13. Vignette ------------------------------------------------------------
-    if not args.no_vignette:
+    # --vignette overrides the preset: 0 disables (same as --no-vignette),
+    # >0 maps strength to a gentle..strong lens angle; unset keeps the preset.
+    if getattr(args, "vignette", None) is not None:
+        vig_on = args.vignette > 0
+        s = min(1.0, max(0.0, args.vignette))
+        vig_angle = f"{math.pi / 8 + s * (math.pi / 5 - math.pi / 8):.4f}"
+    else:
+        vig_on = not args.no_vignette
+        vig_angle = p['vignette']
+    if vig_on and not args.no_vignette:
         if depth10:
             # vignette runs fine at 10-bit in RGB (the earlier "8-bit only"
             # workaround mishandled YUV chroma and turned neutrals magenta).
             graph += (
-                f";{cur}format={rgbfmt},vignette=angle={p['vignette']}[vg]"
+                f";{cur}format={rgbfmt},vignette=angle={vig_angle}[vg]"
             )
             cur = "[vg]"
         else:
-            graph += f";{cur}vignette=angle={p['vignette']}[vg]"
+            graph += f";{cur}vignette=angle={vig_angle}[vg]"
             cur = "[vg]"
 
     # -- 14. Final format + compare combiner --------------------------------
@@ -2874,6 +2932,11 @@ def main() -> None:
                     help="disable the built-in filmic tone curve (e.g. when your LUT includes one)")
     ap.add_argument("--no-vignette", action="store_true",
                     help="disable the vignette")
+    ap.add_argument("--vignette", type=float, default=None, metavar="0-1",
+                    help="projection-lens vignette strength. Legacy pipeline: "
+                         "overrides the preset's vignette (0 disables). "
+                         "Photochemical pipeline: OFF unless set — the develop "
+                         "chain is film physics; lens character is opt-in")
     ap.add_argument("--input-log", type=str, default=None, metavar="CURVE|FILE.cube",
                     help="develop log footage first: 'slog3' (Sony), 'vlog' "
                          "(Panasonic), 'cineon' (generic), or a path to your "

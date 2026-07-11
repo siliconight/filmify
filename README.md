@@ -260,12 +260,20 @@ The generated colour LUTs are cached (keyed by stock, lights, and settings),
 so the first render of a given look builds them once and every render after
 reuses them.
 
+Around the develop core, the rest of filmify's character runs at its
+physical stage: **camera** stages before the negative sees light
+(`--ratio`, `--conform`, `--soften` — lens diffusion happens through
+glass), and **projection** stages on the finished print (`--weave` gate
+transport, `--flicker` lamp breathing, `--vignette 0-1` projection-lens
+falloff — opt-in here, because corner falloff is lens character, not
+something the film process produces).
+
 Two honest notes. The photochemical grain graph is heavier than the default
 pipeline's, so grained renders take noticeably longer — fine for the
 dial-it-in-then-batch-overnight workflow, worth knowing before a rush job.
-And a few default-pipeline features (`--style`, `--look-file`, `--ui`,
-HDR input) aren't wired into photochemical mode yet; it tells you plainly if
-you combine them.
+And a few features (`--style`, `--look-file`, `--ui`, HDR input, leak,
+flare, age) aren't wired into photochemical mode yet; it tells you plainly
+if you use them, and each lands at its physical stage.
 
 ## The control panel
 

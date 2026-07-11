@@ -3,6 +3,59 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.42.1] — 2026-07-11
+
+### Changed
+- **The photochemical vignette is opt-in, not forced.** 0.42.0 applied the
+  projection-lens vignette by default (inheriting the legacy pipeline's
+  semantics); that was the wrong call — the develop chain is film physics,
+  and corner falloff is a *lens* artifact, not something the film process
+  produces. Default photochemical output leaves corners alone again
+  (identical framing to 0.41.0). Lens character is now an explicit choice:
+  a new `--vignette 0-1` strength flag enables it, mapping to a
+  gentle-to-strong lens angle. In the legacy pipeline the same flag
+  overrides the preset's vignette (`--vignette 0` disables, same as
+  `--no-vignette`; unset keeps preset behaviour, so nothing changes for
+  existing looks).
+
+## [0.42.0] — 2026-07-11
+
+### Changed
+- **The photochemical chain is now filmify's main path — camera → develop →
+  projection — and the surrounding stages follow around it at their
+  physical positions.** The develop core (virtual negative, linear-light
+  halation, density-space silver-halide grain, printer lights, print stock)
+  is unchanged; what's new is that the rest of filmify's character now runs
+  *around* it instead of being blocked:
+  - **Camera/lens stages, before the negative sees light:** `--ratio`
+    framing and `--conform` (already wired) are joined by `--soften` — lens
+    diffusion happens through glass, so it precedes exposure.
+  - **Projection/presentation stages, on the finished print:** `--weave`
+    (gate transport), `--flicker` (lamp/print breathing), and the
+    projection-lens **vignette — now on by default** in photochemical mode
+    like everywhere else in filmify (`--no-vignette` to disable). Physical
+    order: transport → lamp → lens. Debug stages (`--debug-stage`) skip
+    projection — a negative on a light table doesn't weave.
+  - Legacy knobs that *approximate* what the develop core now does
+    physically (tone curve, colour discipline, overlay grain plates) are
+    replaced, not ported; the remaining not-yet-wired knobs (leak, flare,
+    age, presence, corner-soften, B&W) still announce themselves plainly
+    and will land at their physical stages (leak/flare belong in exposure,
+    age at presentation, B&W as a mono stock profile).
+  - `--dump-pipeline` shows the camera and projection stages around the
+    develop chain.
+- Note for A/B against 0.41.0 renders: photochemical output now has the
+  default vignette — corners are slightly darker. `--no-vignette` restores
+  the 0.41.0 framing exactly.
+
+### Why
+- One sentence: what 0.36–0.41 built isn't a mode, it's the develop stage —
+  the physics core — and the rest of filmify (camera character in front,
+  projector character behind) composes around it. This release makes that
+  architecture real; wiring the preset gallery and panel to it (and
+  eventually flipping the default pipeline) follows once the chain is
+  validated on real machines.
+
 ## [0.41.0] — 2026-07-11
 
 ### Changed

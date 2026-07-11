@@ -410,6 +410,7 @@ def test_graph_places_effects_at_their_stages():
     a = argparse.Namespace(
         ratio=None, conform=False, depth=8, codec="h264", lut=None,
         debug_stage=None, input_range="auto",
+        soften=0.5, weave=1.2, flicker=0.3, no_vignette=False, vignette=0.5,
         _pc={"negative": "modern_500t", "print": "neutral_release",
              "lights": (25, 25, 25), "transfer": "rec709", "size": 17,
              "neg_lut": lg.negative_lut(neg, size=17),
@@ -444,7 +445,49 @@ def test_graph_places_effects_at_their_stages():
     assert i_merge < i_grain < i_print, \
         "grain is not between the negative merge and the print"
     assert "colorlevels=rimin=" in g and "maskedmerge" in g
+    # camera -> develop -> projection: lens softness precedes the exposure
+    # LUT; gate weave, lamp flicker, and lens vignette follow the print.
+    i_soften = g.index("unsharp=")
+    i_weave = g.index("crop=w=iw-")
+    i_flicker = g.index("hue=b=")
+    i_vig = g.index("vignette=angle=")
+    assert i_soften < i_exp, "lens softness is not before exposure"
+    assert i_print < i_weave < i_flicker < i_vig, \
+        "projection stages are not after the print in physical order"
     assert g.endswith("[vout]")
+
+
+def test_projection_stages_follow_the_print():
+    """Lens vignette is OPT-IN in the photochemical chain — the develop
+    stage is film physics and corner falloff is a lens artifact, so the
+    default render leaves corners alone; --vignette 0-1 enables it.
+    Rendered end-to-end so the stage actually runs, not just appears in
+    the graph string."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        src = td / "flat.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+             "color=0x9a9a9a:s=320x180:r=24:d=0.3",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             str(src)], check=True, timeout=120)
+        plain = td / "plain.mp4"
+        vig = td / "vig.mp4"
+        _render(src, plain, "--grain", "0", "--halation", "0")
+        _render(src, vig, "--grain", "0", "--halation", "0",
+                "--vignette", "0.8")
+        corner_p, corner_v = _rgb_at(plain, 6, 6), _rgb_at(vig, 6, 6)
+        center_p, center_v = _rgb_at(plain, 160, 90), _rgb_at(vig, 160, 90)
+        assert sum(corner_p) - sum(corner_v) >= 6, \
+            f"--vignette had no effect: corner {corner_p} -> {corner_v}"
+        assert abs(sum(center_v) - sum(center_p)) <= 3, \
+            f"vignette moved the center: {center_p} -> {center_v}"
+        # and the default is genuinely untouched: corner ~= center-field
+        # brightness of the same flat source developed without lens character
+        assert abs(sum(corner_p) - sum(center_p)) <= 6, \
+            f"default render has forced vignette: corner {corner_p} " \
+            f"vs center {center_p}"
 
 
 def test_halation_leaves_clean_shadow_untouched():
