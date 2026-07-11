@@ -3,6 +3,21 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.42.2] — 2026-07-11
+
+### Fixed
+- **Failed renders now tell you why.** Previously a render failure said
+  "ffmpeg exited with code N (see console output above)" while the panel
+  path piped ffmpeg's stderr to nowhere — there was nothing above to see.
+  First real-machine testing hit exactly this: five different renders, one
+  useless message. Now filmify streams ffmpeg's stderr through live (the
+  progress line still updates) while keeping the tail, and on failure
+  prints which ffmpeg binary ran, the last lines it said, and — if it said
+  nothing at all — the most likely cause (a broken ffmpeg.exe or the
+  Windows Store alias stub shadowing a real one on PATH). The panel's
+  error message now carries the real reason instead of pointing at a
+  console that may not exist.
+
 ## [0.42.1] — 2026-07-11
 
 ### Changed

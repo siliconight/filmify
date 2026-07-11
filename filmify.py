@@ -58,7 +58,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.42.1"
+__version__ = "0.42.2"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -286,6 +286,59 @@ def run(cmd, **kw):
     if os.name == "nt":
         kw.setdefault("creationflags", 0x08000000)  # CREATE_NO_WINDOW
     return subprocess.run(cmd, **kw)
+
+
+def _stream_ffmpeg(cmd):
+    """Run ffmpeg passing stderr through live (the -stats progress line keeps
+    updating) while KEEPING the tail — so when ffmpeg fails, filmify can say
+    exactly why instead of pointing at console output that never existed.
+    Returns (returncode, [last stderr lines])."""
+    from collections import deque
+    kw = {}
+    if os.name == "nt":
+        kw["creationflags"] = 0x08000000
+    proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, **kw)
+    tail, buf = deque(maxlen=40), b""
+    while True:
+        chunk = proc.stderr.read1(4096)
+        if not chunk:
+            break
+        try:
+            sys.stderr.buffer.write(chunk)
+            sys.stderr.flush()
+        except Exception:
+            pass
+        buf += chunk
+        parts = re.split(rb"[\r\n]+", buf)
+        buf = parts.pop()
+        for ln in parts:
+            s = ln.decode("utf-8", "replace").strip()
+            if s:
+                tail.append(s)
+    if buf.strip():
+        tail.append(buf.decode("utf-8", "replace").strip())
+    proc.wait()
+    return proc.returncode, list(tail)
+
+
+def _explain_ffmpeg_failure(rc, tail):
+    """Print the WHY of an ffmpeg failure: which binary ran, and what it
+    said. A silent instant death almost always means the ffmpeg on PATH is
+    broken (or a Windows Store alias stub) — say so instead of shrugging."""
+    print(f"FAILED: ffmpeg exited with code {rc}")
+    print(f"ffmpeg : {FFMPEG}")
+    lines = [l for l in tail if l.strip()]
+    if lines:
+        print("ffmpeg said:")
+        for l in lines[-12:]:
+            print(f"  {l}")
+        return lines[-1]
+    print("  ffmpeg printed nothing at all. That usually means the "
+          "ffmpeg.exe filmify found is a broken build or the Windows "
+          "Store alias stub — run `ffmpeg -version` in a terminal to "
+          "check, or drop a real ffmpeg.exe next to filmify.py "
+          "(filmify prefers it over PATH only if PATH has none).")
+    return ""
 
 
 def reveal_in_file_manager(path: Path) -> None:
@@ -1779,8 +1832,9 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
         res["ok"] = True
         return res
 
+    err_tail = []
     if progress_cb is None:
-        rc = run(cmd).returncode
+        rc, err_tail = _stream_ffmpeg(cmd)
     else:
         # Total duration we're rendering, for percentage. Preview caps it.
         total = info["duration"] or 0
@@ -1792,7 +1846,22 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
         if os.name == "nt":
             kw["creationflags"] = 0x08000000
         proc = subprocess.Popen(pcmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, **kw)
+                                stderr=subprocess.PIPE, text=True,
+                                errors="replace", **kw)
+        # Drain stderr on a thread (a full pipe would deadlock the render)
+        # and KEEP the tail — it's the only witness when ffmpeg fails.
+        import threading
+        from collections import deque
+        _tail = deque(maxlen=40)
+
+        def _drain(pipe):
+            for raw in iter(pipe.readline, ""):
+                s = raw.strip()
+                if s:
+                    _tail.append(s)
+        drain = threading.Thread(target=_drain, args=(proc.stderr,),
+                                 daemon=True)
+        drain.start()
         for line in proc.stdout:
             line = line.strip()
             if line.startswith("out_time_us=") and total > 0:
@@ -1805,10 +1874,15 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
             elif line == "progress=end":
                 progress_cb(100)
         proc.wait()
+        drain.join(timeout=3)
         rc = proc.returncode
+        err_tail = list(_tail)
     if rc != 0:
-        res["error"] = f"ffmpeg exited with code {rc} (see console output above)"
-        print(f"FAILED: {res['error']}\n")
+        last = _explain_ffmpeg_failure(rc, err_tail)
+        res["error"] = (f"ffmpeg exited with code {rc}"
+                        + (f" — {last}" if last
+                           else " — ffmpeg printed nothing (broken "
+                                "ffmpeg.exe on PATH? run: ffmpeg -version)"))
         return res
 
     res["ok"] = True
