@@ -3,6 +3,67 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.40.1] — 2026-07-11
+
+### Fixed
+- **Grain no longer produces "rainbow" colour speckle.** The v0.40.0
+  decorrelated-colour grain, tested on real footage, put independent R/G/B
+  noise on different pixels — which reads as saturated colour confetti
+  (digital-compression sparkle), not silver halide. Corrected to how film
+  actually behaves: grain is dominated by *luminance*, with only a faint
+  chroma component. The base grain is now one luminance field replicated
+  across all three channels (neutral by construction — zero colour speckle),
+  with a separate, coarse, low-amplitude chroma field added at a small
+  weight for subtle dye-cloud variation. Multi-scale crystals and
+  shadow-weighting are unchanged. New profile knobs `chroma_weight` (how
+  much colour grain) and `grain_saturation` (residual-chroma clamp) tune it;
+  defaults are deliberately conservative toward neutral for clean skin.
+
+## [0.40.0] — 2026-07-11
+
+### Changed
+- **Silver-halide grain rebuild — the density-space grain is now modeled on
+  real film physics, not a single noise field.** Grain placement was already
+  correct (a perturbation of the negative density, printed through the
+  stock, not an overlay); this rebuilds its *character* so it reads as
+  emulsion rather than digital noise. Four physical properties, each
+  measured in the test suite:
+  - **Multi-scale crystals.** Real grain has a crystal size distribution —
+    many fine grains plus sparser large ones — so the field is now a *sum*
+    of noise scales (a fine high-frequency layer + a coarse low-frequency
+    layer), not one blurred noise plate. A single scale is the giveaway of
+    synthetic grain; the coarse layer survives 4x downsampling where
+    single-frequency noise would wash out.
+  - **Shadow-weighted, not mid-peaked.** Grain is strongest where the
+    negative is thin (low density = scene shadow) and quiets in the dense
+    highlights — relative density fluctuation is largest at low density, and
+    the faster/larger crystals live in the shadow-sensitive toe. The old
+    curve peaked in the mids; the new one rises toward the toe, matching how
+    real footage looks (grainiest in shadows, cleanest in highlights).
+  - **Decorrelated colour.** Colour negative has three independent R/G/B
+    emulsion layers, each with its own grain, so chroma grain is not tinted
+    luma. Grain is now built as three separate noise fields (per-layer
+    seeds) merged per-channel, with only a small shared component modeling
+    the common base/scatter. Blue (fastest layer, largest crystals) is the
+    grainiest channel, red the finest.
+  - **Amplitude in granularity units.** Per-layer strength derives from the
+    profile's RMS granularity (the standard diffuse-RMS-density measure),
+    so the 0-20 intensity and the gauge scaling track a real density
+    fluctuation instead of an arbitrary slider.
+  - Profile `grain` block reworked accordingly (`rms_granularity`,
+    `crystal_scales`, `density_amplitude_curve`, `layer_correlation`),
+    replacing the old `fine_scale`/`cloud_scale`/`channel_strength`/
+    mid-peaked `density_curve`.
+
+### Notes
+- The grain graph is heavier: photochemical render time with grain roughly
+  doubles (still an unattended-batch tool — "dial in, process, walk away").
+  A future `--grain-quality` lever can trade fidelity for speed if needed.
+- Legacy pipeline and halation are unchanged. All photochemical invariants
+  still hold (neutral base, printer-light isolation, exact-shadow halation);
+  the grain neutrality/isolation tests render grain-off, and grain has its
+  own tests for the four properties above.
+
 ## [0.39.0] — 2026-07-11
 
 ### Added

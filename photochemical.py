@@ -350,11 +350,38 @@ GENERIC_NEGATIVE = {
     },
     "grain": {
         "reference_gauge": "35mm",
-        "fine_scale": 1.0,
-        "cloud_scale": 2.8,
-        "channel_strength": [0.75, 0.85, 1.0],
-        "channel_correlation": 0.35,
-        "density_curve": [[0.0, 0.25], [0.3, 0.85], [0.6, 1.0], [1.0, 0.45]],
+        # RMS granularity per layer (diffuse RMS density x1000 at 1.0D over a
+        # 0.048mm aperture — the standard microdensitometer measure). Blue
+        # (fastest, largest crystals) is grainiest; red finest. These set the
+        # amplitude in physical density units, not an arbitrary slider.
+        "rms_granularity": [9.0, 10.0, 13.0],
+        # Silver-halide grain has a CRYSTAL SIZE DISTRIBUTION, not one clump
+        # size — a fine high-frequency layer plus a sparser large-crystal
+        # low-frequency layer. The single-scale Gaussian field is the tell of
+        # synthetic grain; summing two scales breaks it. Values are clump
+        # radii in px at the reference 2K width, and each layer's share of
+        # the total variance.
+        "crystal_scales": [
+            {"radius_2k": 1.1, "weight": 0.68},
+            {"radius_2k": 3.2, "weight": 0.32},
+        ],
+        # Grain is strongest where the negative is THIN (shadows): relative
+        # density fluctuation is largest at low density, and faster/larger
+        # crystals live in the shadow-sensitive toe. So the mask RISES toward
+        # D-min and falls toward the dense highlights — the opposite of an
+        # overlay, and the opposite of the old mid-peaked curve.
+        "density_amplitude_curve": [
+            [0.0, 1.00], [0.15, 0.95], [0.4, 0.70],
+            [0.7, 0.45], [1.0, 0.28],
+        ],
+        # Independent R/G/B emulsion layers -> color grain is decorrelated
+        # from luma, not tinted luma. But grain is MOSTLY luminance: only a
+        # small fraction is decorrelated colour, or independent layers
+        # produce "rainbow" R/G/B speckle (digital-compression look). chroma
+        # is that small fraction; grain_saturation clamps residual colour.
+        "layer_correlation": 0.15,
+        "chroma_weight": 0.12,
+        "grain_saturation": 0.45,
     },
     "development_defaults": {
         "push_pull_stops": 0.0,

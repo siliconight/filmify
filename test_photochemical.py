@@ -308,9 +308,12 @@ def test_photochemical_chain_renders():
              "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
              str(ramp)], check=True, timeout=120)
 
-        # 27.1.1/27.1.9: full chain, monotone luminance, neutral gray ramp
+        # 27.1.1/27.1.9: full chain, monotone luminance, neutral gray ramp.
+        # Grain OFF here — per-channel grain intentionally adds channel
+        # variance now (blue grainiest), which is verified in the grain
+        # tests; neutrality is a property of the base development.
         out = td / "out.mp4"
-        _render(ramp, out)
+        _render(ramp, out, "--grain", "0")
         prev, worst_spread = -1, 0
         for x in (8, 40, 72, 104, 136, 168, 200, 232):
             px = _rgb_at(out, x)
@@ -323,9 +326,10 @@ def test_photochemical_chain_renders():
         mid = _rgb_at(out, 104)
         assert abs(sum(mid) / 3 - 103) <= 8, f"mid-gray drifted: {mid}"
 
-        # 27.3: +8 red printer points prints denser red = less red out
+        # 27.3: +8 red printer points prints denser red = less red out.
+        # Grain off for a clean per-channel read (grain adds channel spread).
         red = td / "red.mp4"
-        _render(ramp, red, "--printer-lights", "33,25,25")
+        _render(ramp, red, "--grain", "0", "--printer-lights", "33,25,25")
         n, r = _rgb_at(out, 104), _rgb_at(red, 104)
         assert n[0] - r[0] >= 10, f"red light had no effect: {n} -> {r}"
         assert abs(n[2] - r[2]) <= 5, f"blue moved with red light: {n} -> {r}"
@@ -333,7 +337,7 @@ def test_photochemical_chain_renders():
         # 27.1.3/27.1.4: density debug render rises with exposure and is
         # not an RGB inversion
         dens = td / "dens.mp4"
-        _render(ramp, dens, "--debug-stage", "negative-density")
+        _render(ramp, dens, "--grain", "0", "--debug-stage", "negative-density")
         lo, mi, hi = (_rgb_at(dens, x) for x in (8, 104, 232))
         assert lo[1] < mi[1] < hi[1], f"density not rising: {lo} {mi} {hi}"
         assert abs(mi[1] - (255 - 103)) > 30, "density looks like 1 - RGB"
@@ -370,8 +374,12 @@ def test_split_negative_composition_matches_fused():
 
 
 def test_grain_mask_lut_shape():
-    """The grain mask must peak in the mids and stay quieter at D-min/D-max
-    — that's what makes it negative grain instead of overlay grain."""
+    """The grain mask is SHADOW-WEIGHTED: grain is strongest where the
+    negative is thin (low density = scene shadow) and quiets in the dense
+    highlights — the opposite of an overlay, and the film-correct direction
+    (relative density fluctuation is largest at low density; faster/larger
+    crystals live in the shadow-sensitive toe). Blue (fastest layer, largest
+    crystals) is the grainiest channel."""
     lg = _lg()
     neg = pc.get_builtin("modern_500t")
     size, rows = _parse_cube(lg.grain_mask_lut(neg))
@@ -379,8 +387,11 @@ def test_grain_mask_lut_shape():
     gray = [rows[i + i * size + i * size * size] for i in range(size)]
     lo, mid, hi = gray[0], gray[size // 2], gray[-1]
     for ch in range(3):
-        assert mid[ch] > lo[ch], "mask not rising out of D-min"
-        assert mid[ch] > hi[ch], "mask not falling toward D-max"
+        # monotonically stronger toward low density (scene shadow)
+        assert lo[ch] > mid[ch] > hi[ch], \
+            "mask not shadow-weighted (should fall from D-min to D-max)"
+    # blue layer grainiest, red finest, at every density
+    assert lo[2] >= lo[1] >= lo[0], "blue should be the grainiest layer"
 
 
 def test_graph_places_effects_at_their_stages():
@@ -410,7 +421,11 @@ def test_graph_places_effects_at_their_stages():
              "preview_lut": None,
              "hal": {"thr_lin": 0.25, "headroom": hr, "radius2k": 60.0,
                      "strength": 0.4, "matrix": neg["halation"]["matrix"]},
-             "grain": {"g": 7, "div": 1.6,
+             "grain": {"g": 7, "amp": 1.0, "div": 1.6,
+                       "rms": [9.0, 10.0, 13.0],
+                       "scales": [{"radius_2k": 1.1, "weight": 0.68},
+                                  {"radius_2k": 3.2, "weight": 0.32}],
+                       "chroma": 0.12, "plate_sat": 0.45,
                        "mask_lut": lg.grain_mask_lut(neg)}})
     info = {"width": 640, "height": 360, "fps": 24.0, "hdr": False,
             "color_range": "", "color_primaries": "", "color_space": "",
@@ -532,6 +547,71 @@ def test_grain_is_temporal_density_masked_and_mean_stable():
         assert s_mid > s_mid_cl + 0.5, "no visible grain at mid density"
         assert s_mid > s_hi, \
             f"grain not density-masked (mid {s_mid:.2f} <= high {s_hi:.2f})"
+
+
+def test_grain_is_multiscale_and_neutral():
+    """Silver-halide grain, not tinted-luma noise. Two measurable properties
+    separate it from a single Gaussian overlay:
+      * MULTI-SCALE — a large-crystal low-frequency layer survives heavy
+        downsampling far more than single-frequency noise would;
+      * DECORRELATED COLOUR — the three emulsion layers are different noise,
+        so per-channel grain is not identical, and blue (fastest, largest
+        crystals) is the grainiest channel.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        skin = td / "skin.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+             "color=0xb98a6f:s=320x320:r=24:d=0.5",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             str(skin)], check=True, timeout=120)
+        gr = td / "gr.mp4"
+        _render(skin, gr, "--halation", "0", "--grain", "14")
+
+        def gray_sigma(div):
+            vf = ("select=eq(n\\,3),crop=240:240:40:40"
+                  + (f",scale=iw/{div}:ih/{div}" if div > 1 else ""))
+            d = subprocess.run(
+                ["ffmpeg", "-v", "error", "-i", str(gr), "-vf", vf,
+                 "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                capture_output=True).stdout
+            v = list(d)
+            m = sum(v) / len(v)
+            return (sum((x - m) ** 2 for x in v) / len(v)) ** 0.5
+
+        full, quarter = gray_sigma(1), gray_sigma(4)
+        # single-frequency noise loses almost all energy by 1/4 (~0.15-0.25);
+        # a real large-crystal layer retains a clearly higher fraction
+        assert quarter / max(full, 1e-6) > 0.30, \
+            f"grain is single-scale (1/4 retains {quarter / full:.2f} of energy)"
+
+        d = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(gr), "-vf",
+             "select=eq(n\\,3),crop=240:240:40:40", "-frames:v", "1",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            capture_output=True).stdout
+        r, g, b = list(d[0::3]), list(d[1::3]), list(d[2::3])
+
+        def sig(v):
+            m = sum(v) / len(v)
+            return (sum((x - m) ** 2 for x in v) / len(v)) ** 0.5
+
+        # chroma noise = std of channel differences (0 for neutral grain).
+        # This is the "rainbow speckle" metric — it must be small relative to
+        # the luminance grain. Fully-decorrelated colour grain reads as
+        # digital-compression sparkle; real grain is luminance-dominant.
+        n = len(r)
+        rg = [r[i] - g[i] for i in range(n)]
+        bg = [b[i] - g[i] for i in range(n)]
+        lum = [(r[i] + g[i] + b[i]) / 3 for i in range(n)]
+        chroma_noise = (sig(rg) + sig(bg)) / 2
+        luma_noise = sig(lum)
+        assert luma_noise > 1.0, "no visible grain"
+        assert chroma_noise < 0.4 * luma_noise, \
+            (f"grain too chromatic (rainbow risk): chroma {chroma_noise:.2f} "
+             f"vs luma {luma_noise:.2f}")
 
 
 def test_schema_v1_looks_stay_legacy():

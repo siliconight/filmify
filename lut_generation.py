@@ -518,14 +518,25 @@ def _interp_linear(points, x: float) -> float:
 
 
 def grain_mask_lut(negative: dict, size: int = 17) -> Path:
-    """Normalized negative density -> per-channel grain amplitude (0..1),
-    from the profile's density curve × per-channel strengths. Drives a
-    maskedmerge between the clean and fully-grained density frames, which
-    is what makes grain density-dependent: mids wear it, D-min and D-max
-    stay quieter — negative grain, not overlay grain."""
+    """Normalized negative density -> per-channel grain amplitude (0..1).
+
+    Two physical facts drive it:
+      * grain is strongest where the negative is THIN (shadows) and quiets
+        in the dense highlights — the profile's density_amplitude_curve,
+        which RISES toward D-min (opposite of an overlay, and opposite of
+        the old mid-peaked curve);
+      * each emulsion layer has its own granularity, so the per-channel
+        ceiling is the layer's RMS granularity normalized to the grainiest
+        layer — blue (fastest, largest crystals) wears the most.
+
+    Drives a maskedmerge between the clean and fully-grained density frames:
+    negative grain, printed through the stock, not an overlay on the image."""
     g = negative.get("grain", {})
-    dcurve = g.get("density_curve") or [[0.0, 1.0], [1.0, 1.0]]
-    strengths = g.get("channel_strength", [1.0, 1.0, 1.0])
+    curve = (g.get("density_amplitude_curve")
+             or g.get("density_curve") or [[0.0, 1.0], [1.0, 1.0]])
+    rms = g.get("rms_granularity") or g.get("channel_strength") or [1.0, 1.0, 1.0]
+    peak = max(rms) or 1.0
+    layer_ceiling = [r / peak for r in rms]
     key = _cache_key("grainmask", size,
                      profile=pc.profile_fingerprint(negative))
     path = _cube_path("grainmask", key, size)
@@ -533,8 +544,8 @@ def grain_mask_lut(negative: dict, size: int = 17) -> Path:
         return path
 
     def ax(ci):
-        s = float(strengths[ci])
-        return [min(1.0, max(0.0, _interp_linear(dcurve, i / (size - 1)) * s))
+        c = layer_ceiling[ci]
+        return [min(1.0, max(0.0, _interp_linear(curve, i / (size - 1)) * c))
                 for i in range(size)]
     ar, ag, ab = ax(0), ax(1), ax(2)
 

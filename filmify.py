@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.39.0"
+__version__ = "0.40.1"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -745,9 +745,21 @@ def _setup_photochemical(args, ap) -> None:
         pcd["neg_lut"] = _lut_mod.negative_lut(neg, transfer=transfer,
                                                size=size)
     if grain_on:
+        gprof = neg.get("grain", {})
+        rms = gprof.get("rms_granularity") or [10.0, 10.0, 10.0]
+        scales = gprof.get("crystal_scales") or [{"radius_2k": 1.5,
+                                                  "weight": 1.0}]
         pcd["grain"] = {
-            "g": max(1, round(grain_g * gauge_amp)),
-            "div": gauge_div,
+            "g": grain_g,                 # user 0-20 intensity
+            "amp": gauge_amp,             # gauge amplitude multiplier
+            "rms": rms,                   # per-layer granularity (relative)
+            "scales": scales,             # crystal size distribution
+            # how much of the grain is decorrelated colour vs shared luma.
+            # Small: grain is mostly luminance, only a faint dye-cloud tint,
+            # so no "rainbow" R/G/B speckle.
+            "chroma": gprof.get("chroma_weight", 0.15),
+            "plate_sat": gprof.get("grain_saturation", 0.5),
+            "div": gauge_div,             # gauge clump-size divisor
             "mask_lut": _lut_mod.grain_mask_lut(neg),
         }
     args._pc = pcd
@@ -904,24 +916,134 @@ def build_photochemical_graph(args, info: dict) -> str:
     cur = "[dens]"
 
     if grain:
-        # Density space: additive perturbation of the developed negative.
-        # A mid-gray plate carries the noise (grainmerge is mid-anchored, so
-        # the density mean is untouched); gauge sets the clump size via the
-        # plate resolution; the profile's density curve — via a small 3D LUT
-        # mask — puts the grain where the emulsion wears it: in the mids.
-        # Luma noise refreshes every frame (t+u); chroma noise is coarser and
-        # temporally averaged (t+u+a) so color grain reads as dye clouds,
-        # not fizz — same anti-boil recipe the legacy chain proved.
-        g = grain["g"]
-        gw = max(2, int(cw / grain["div"] / 2) * 2)
-        gh = max(2, int(ch / grain["div"] / 2) * 2)
-        upscale = ("" if grain["div"] == 1.0
-                   else f",scale={cw}:{ch}:flags=bilinear")
+        # Silver-halide grain, not an overlay. Three things make it read as
+        # film rather than digital noise, all built here in DENSITY space
+        # (between negative and print), then printed through the stock:
+        #
+        #  1. MULTI-SCALE crystals. Real grain has a size distribution — many
+        #     fine crystals plus sparser large ones — so the field is a SUM
+        #     of noise scales, not one gblur sigma. A single scale is the
+        #     dead giveaway of synthetic grain.
+        #  2. THREE INDEPENDENT LAYERS. Colour negative has separate R/G/B
+        #     emulsions, each with its own grain, so chroma grain is
+        #     decorrelated from luma — built as three separate noise plates
+        #     merged per-channel, not one luma field tinted. A small shared
+        #     component (layer_correlation) models the common base/scatter.
+        #  3. AMPLITUDE IN GRANULARITY UNITS. Per-layer strength comes from
+        #     the profile's RMS granularity (blue coarsest), scaled by the
+        #     user 0-20 intensity and gauge — so "grain 7" tracks a real
+        #     density fluctuation instead of an arbitrary slider.
+        #
+        # The density mask (shadow-weighted) then puts it where the negative
+        # is thin. Luma-ish base noise refreshes per frame (t+u); the finest
+        # is left to shimmer, coarse crystals are temporally averaged (t+u+a)
+        # so they read as dye clouds, not fizz.
+        gi = grain["g"]
+        # Overall gain. Boosted because the signal is diluted downstream:
+        # averaging the crystal scales and the shared layer each reduce
+        # variance by ~sqrt(N), the density mask scales it by <1, and the
+        # print curve + 8-bit output compress it further. Calibrated so a
+        # mid-scene patch shows real grain, not a hint.
+        base = gi * grain["amp"] * 3.2
+        rms = grain["rms"]
+        peak = max(rms) or 1.0
+        scales = grain["scales"]
+        ch2 = ch
+        # distinct seeds per layer/scale so the three emulsion layers are
+        # different noise, not one field tinted. (ffmpeg's noise PRNG only
+        # decorrelates to ~0.6 even with far-apart seeds — real dye layers
+        # share base/scatter too, so partial correlation is acceptable and
+        # the profile's layer_correlation models the intended floor.)
+        seed_base = {"gl": 250013, "gr": 10007, "gg": 400009, "gb": 900007}
+
+        def _layer(chan, tag):
+            # one emulsion layer = sum of crystal scales at this channel's
+            # granularity, carried on a mid-gray plate (grainmerge-neutral).
+            # Noise is generated at a capped resolution and upscaled: the
+            # `noise` filter is the render's main cost, and grain clumps span
+            # several pixels, so generating at ~half res then scaling up is
+            # visually indistinguishable and roughly 3-4x faster.
+            amp = base * (rms[chan] / peak)
+            gen_cap = 960.0            # max noise-gen width; upscale past this
+            parts = []
+            names = []
+            for si, sc in enumerate(scales):
+                # clump size: reference 2K radius scaled to frame, via gauge
+                r = max(1.0, sc["radius_2k"] * cw / 2048.0 / grain["div"])
+                # generation resolution: frame/clump, but capped
+                gw_full = cw / r
+                gen_scale = min(1.0, gen_cap / cw)
+                pw = max(2, int(gw_full * gen_scale / 2) * 2)
+                ph = max(2, int(ch2 / r * gen_scale / 2) * 2)
+                # variance share -> per-scale noise strength; coarse scales
+                # temporally averaged so they don't boil
+                nstr = max(1, round(amp * (sc["weight"] ** 0.5)))
+                tmode = "t+u" if si == 0 else "t+u+a"
+                seed = seed_base[tag] + si * 5171
+                up = ("" if (pw == cw and ph == ch2)
+                      else f",scale={cw}:{ch2}:flags=bilinear")
+                lbl = f"{tag}s{si}"
+                parts.append(
+                    f"color=c=0x808080:s={pw}x{ph}:r={out_fps:g},"
+                    f"noise=c0s={nstr}:c0f={tmode}:all_seed={seed}{up},"
+                    f"format=gbrp16le,"
+                    f"gblur=sigma={max(0.6, r * 0.5):.2f}[{lbl}];")
+                names.append(f"[{lbl}]")
+            # sum the scales for this layer (average keeps variance bounded)
+            if len(names) == 1:
+                return "".join(parts), names[0]
+            chain = "".join(parts)
+            acc = names[0]
+            for k in range(1, len(names)):
+                out = f"{tag}acc{k}"
+                chain += (f"{acc}{names[k]}blend=all_mode=average[{out}];")
+                acc = f"[{out}]"
+            return chain, acc
+
+        ch2 = ch
+        # Grain colour, done simply and correctly. Real grain is dominated by
+        # LUMINANCE fluctuation; the colour component is small and coarser
+        # (dye clouds, not per-pixel confetti). So:
+        #   * build ONE luma grain field (the multi-scale crystal sum) and
+        #     replicate it to R/G/B -> perfectly neutral grain, no speckle;
+        #   * add a SEPARATE, faint, coarser chroma field weighted per layer
+        #     (blue most) -> subtle colour variation, physically the
+        #     independent dye layers, but far too weak to read as rainbow.
+        # This is what fixes the "digital compression" colour speckle: the
+        # base grain has ZERO chroma by construction.
+        luma_chain, luma = _layer(1, "gl")          # green-speed luma field
+        chroma_w = grain["chroma"]
+        # faint chroma field: coarse, low amplitude, per-layer seeds
+        cbase = base * chroma_w
+        cw_gen = max(2, int(min(cw, 640) / 2) * 2)
+        ch_gen = max(2, int(min(cw, 640) / cw * ch2 / 2) * 2)
+        cup = ("" if cw_gen == cw else f",scale={cw}:{ch2}:flags=bilinear")
+
+        def _chroma(chan, tag, seed):
+            amp = max(1, round(cbase * (rms[chan] / peak)))
+            return (f"color=c=0x808080:s={cw_gen}x{ch_gen}:r={out_fps:g},"
+                    f"noise=c0s={amp}:c0f=t+u+a:all_seed={seed}{cup},"
+                    f"format=gbrp16le,gblur=sigma=1.6,extractplanes=g[{tag}];")
+
         graph += (
-            f";color=c=0x808080:s={gw}x{gh}:r={out_fps:g},"
-            f"noise=c0s={g}:c0f=t+u:"
-            f"c1s={max(1, g // 3)}:c1f=t+u+a:c2s={max(1, g // 3)}:c2f=t+u+a"
-            f"{upscale},format=gbrp16le,gblur=sigma=1.2[gnz];"
+            f";{luma_chain}"
+            # replicate luma to all three channels -> neutral base grain
+            f"{luma}split=3[gl0][gl1][gl2];"
+            f"[gl0]extractplanes=g[glr];"
+            f"[gl1]extractplanes=g[glg];"
+            f"[gl2]extractplanes=g[glb];"
+            # faint per-layer chroma fields
+            f"{_chroma(0, 'chr_r', 11117)}"
+            f"{_chroma(1, 'chr_g', 51151)}"
+            f"{_chroma(2, 'chr_b', 91191)}"
+            # luma + faint chroma per channel (chroma at low opacity)
+            f"[glr][chr_r]blend=all_mode=average:all_opacity={chroma_w:.3f}[cr];"
+            f"[glg][chr_g]blend=all_mode=average:all_opacity={chroma_w:.3f}[cg];"
+            f"[glb][chr_b]blend=all_mode=average:all_opacity={chroma_w:.3f}[cb];"
+            # assemble -> RGB plate (gbrp plane order G,B,R)
+            f"[cg][cb][cr]mergeplanes=0x001020:gbrp,format=gbrp16le,"
+            f"eq=saturation={grain['plate_sat']:.2f}[gnz];"
+            # apply as a density perturbation, masked shadow-weighted
             f"{cur}split=3[db][dg][dm];"
             f"[dg][gnz]blend=all_mode=grainmerge:shortest=1[dgr];"
             f"[dm]lut3d=file={fpath(grain['mask_lut'])}:interp=tetrahedral[gm];"
