@@ -3,6 +3,25 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.41.0] — 2026-07-11
+
+### Changed
+- **Photochemical colour holds saturation.** Tested on real footage, the
+  print chain was over-desaturating — two crosstalk matrices in series (the
+  negative's `sensitivity_matrix` and the print's `printer_matrix`) multiply,
+  so their combined channel-bleed crushed saturated colours (a warm
+  candlelit frame lost ~46% of its saturation; skin and mildly-coloured
+  scenes were closer to right). Both matrices are tightened toward the
+  identity — less inter-layer crosstalk, which is also truer to how good
+  colour negative behaves (the orange mask and inter-image effects preserve
+  colour separation rather than muddying it). Result on the test stills:
+  whole-frame saturation retention rose from ~83% to ~92% on a daylight
+  frame and from ~54% to ~60% on a heavily-saturated candlelit frame — the
+  remaining rolloff on near-clipping colours is the print shoulder behaving
+  as film should. Neutral gray still prints perfectly neutral (the
+  per-channel printer-light calibration re-balances around the new
+  matrices), so there's no colour cast.
+
 ## [0.40.1] — 2026-07-11
 
 ### Fixed

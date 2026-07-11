@@ -18,6 +18,13 @@ motion with a 180° shutter feel, gentle softness, restrained color, halation
 glow around bright lights, and organic grain. No NLE, no plugins, no
 subscription — just Python and FFmpeg.
 
+There are two engines under the hood. The **default** pipeline is the fast,
+proven finishing chain described throughout this README. The newer
+**photochemical** pipeline (`--pipeline photochemical`) simulates the actual
+film chain — virtual negative, printer lights, print stock — and carries
+filmify's most film-accurate grain and halation. See
+[The photochemical pipeline](#the-photochemical-pipeline) below.
+
 ## Your first five minutes
 
 **Easiest start (no terminal needed):** double-click the START-HERE file
@@ -200,6 +207,66 @@ the HTML report.
 A style is just a flag set — every individual flag still overrides it, and
 `--save-look` captures the expanded result.
 
+## The photochemical pipeline
+
+```sh
+python filmify.py clip.mp4 --pipeline photochemical
+```
+
+The default pipeline applies film-like *effects* to your finished image.
+The photochemical pipeline instead simulates the **film chain itself** — it
+develops your footage the way a lab does, and the film character falls out
+of the physics instead of being painted on. It's opt-in while it settles in;
+the default pipeline stays the default.
+
+What actually happens, in order:
+
+1. Your footage is exposed onto a **virtual colour negative** — a
+   characteristic curve per layer, with the soft toe and shoulder that give
+   film its highlight rolloff and shadow latitude.
+2. **Halation** is added as real re-exposure *in linear light, before the
+   negative curve*: bright highlights reflect off the film base and
+   re-expose the emulsion around them, so a practical light blooms into its
+   surroundings with the stock's warm, red-biased glow — and because it
+   happens before the curve, a blown highlight blooms hard while a mid
+   highlight barely does, automatically.
+3. **Grain** is a perturbation of the developed **negative density**, not an
+   overlay on the picture. It's real silver-halide texture: multi-scale
+   crystals (fine grains plus sparser large ones, so it never looks like
+   flat digital noise), strongest in the shadows and mid-tones and cleanest
+   in the highlights the way negative actually behaves, and dominated by
+   luminance so it doesn't add colour speckle. It's then *printed through*
+   the print stock, so it sits inside the image.
+4. The negative is **printed** through printer lights and a print-stock
+   colour engine — subtractive density curves and inter-layer crosstalk —
+   then projected and scanned back to Rec.709.
+
+Controls:
+
+- `--negative-stock <name>` / `--print-stock <name>` — pick the negative and
+  print profiles (generic, non-branded stock characters).
+- `--printer-lights R,G,B` — the lab's colour-timing trim, exactly like a
+  printer's light valves. Neutral is `25,25,25`; higher on a channel prints
+  *denser*, i.e. *less* of that colour in the result.
+- `--grain 0-20`, `--halation 0-1`, `--gauge 16mm|35mm|70mm` — grain amount,
+  halation strength, and physical stock scale (gauge sets grain clump size
+  and halation reach). Grain and halation are **on by default** here.
+- `--debug-stage negative-density|negative-preview` — render an intermediate
+  stage to see the negative before printing.
+- `--dump-pipeline` — print the ordered list of stages and where each
+  transform runs; `--dump-luts` writes the generated LUTs next to the output.
+
+The generated colour LUTs are cached (keyed by stock, lights, and settings),
+so the first render of a given look builds them once and every render after
+reuses them.
+
+Two honest notes. The photochemical grain graph is heavier than the default
+pipeline's, so grained renders take noticeably longer — fine for the
+dial-it-in-then-batch-overnight workflow, worth knowing before a rush job.
+And a few default-pipeline features (`--style`, `--look-file`, `--ui`,
+HDR input) aren't wired into photochemical mode yet; it tells you plainly if
+you combine them.
+
 ## The control panel
 
 ```sh
@@ -313,6 +380,9 @@ Every component can be overridden individually: `--grain`, `--halation`,
 without running it.
 
 ## What the pipeline does (in order)
+
+This is the **default** pipeline. For the film-chain simulation, see
+[The photochemical pipeline](#the-photochemical-pipeline).
 
 0. **Source development** — HDR (HLG/PQ) is tone-mapped to Rec.709; full-range
    levels and non-709 primaries are normalized. Standard Rec.709 footage skips

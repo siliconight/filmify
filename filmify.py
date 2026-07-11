@@ -57,7 +57,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.40.1"
+__version__ = "0.41.0"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify

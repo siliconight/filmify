@@ -319,9 +319,9 @@ GENERIC_NEGATIVE = {
     "scene_stop_range": [-10.0, 6.0],
     "density_storage_range": [0.0, 3.5],
     "sensitivity_matrix": [
-        [0.92, 0.06, 0.02],
-        [0.04, 0.92, 0.04],
-        [0.02, 0.09, 0.89],
+        [0.96, 0.03, 0.01],
+        [0.02, 0.96, 0.02],
+        [0.01, 0.05, 0.94],
     ],
     "layers": {
         # Channel curves share one shape, offset by base density. Parallel
@@ -404,9 +404,9 @@ GENERIC_PRINT = {
     "neutral_printer_lights": [25, 25, 25],
     "light_point_stops": 0.025,
     "printer_matrix": [
-        [0.90, 0.07, 0.03],
-        [0.05, 0.90, 0.05],
-        [0.03, 0.09, 0.88],
+        [0.95, 0.035, 0.015],
+        [0.025, 0.95, 0.025],
+        [0.015, 0.05, 0.935],
     ],
     "layers": {
         # Same parallel-shape discipline as the negative (see note there).
