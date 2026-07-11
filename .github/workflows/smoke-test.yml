@@ -52,7 +52,7 @@ jobs:
 
       - name: Run smoke + launcher tests
         timeout-minutes: 10
-        run: pytest -q -s test_filmify.py test_launchers.py
+        run: pytest -q -s test_filmify.py test_launchers.py test_photochemical.py
 
       - name: Install Playwright (Linux only — UI interaction test)
         if: runner.os == 'Linux'

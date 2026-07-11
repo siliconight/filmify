@@ -57,7 +57,21 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.35.3"
+__version__ = "0.39.0"
+
+# The photochemical pipeline lives in sibling modules so the launchers and
+# packaging stay single-entry-point simple. Guarded import: legacy filmify
+# must keep working even if only filmify.py was copied somewhere.
+try:
+    import photochemical as _pc_mod
+    import lut_generation as _lut_mod
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import photochemical as _pc_mod
+        import lut_generation as _lut_mod
+    except ImportError:
+        _pc_mod = _lut_mod = None
 
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
@@ -582,6 +596,358 @@ def source_normalize(info: dict, args) -> str:
     return "zscale=rin=full:r=tv"  # range only, nothing else touched
 
 
+def _validate_photochemical_flags(args, ap) -> tuple:
+    """Filesystem-free validation of photochemical-mode flags — runs right
+    after argument parsing, BEFORE the input-file checks, so a typo'd stock
+    name or an unsupported flag combination reports as what it is rather
+    than hiding behind a missing-file error. Returns (print_profile_id,
+    printer_lights, input_transfer) for _setup_photochemical to build on."""
+    if _pc_mod is None or _lut_mod is None:
+        sys.exit("error: photochemical.py and lut_generation.py must sit "
+                 "next to filmify.py for --pipeline photochemical")
+    if args.style or args.look_file:
+        sys.exit("error: --style and --look-file are legacy-pipeline recipes; "
+                 "photochemical looks arrive with the versioned look schema")
+    if args.save_look:
+        sys.exit("error: --save-look writes legacy (schema 1) look files, "
+                 "which always select the legacy pipeline; the photochemical "
+                 "look schema arrives with saved-look v2")
+    if args.compare:
+        sys.exit("error: --compare isn't wired into the photochemical chain "
+                 "yet — render both pipelines and A/B them for now")
+    if args.ui:
+        sys.exit("error: the control panel drives the legacy pipeline for "
+                 "now; photochemical panel controls arrive with the UI pass")
+
+    negatives = sorted(p for p, d in _pc_mod.BUILTIN_PROFILES.items()
+                       if d["profile_type"] == "negative")
+    prints = sorted(p for p, d in _pc_mod.BUILTIN_PROFILES.items()
+                    if d["profile_type"] == "print")
+    if args.negative_stock not in negatives:
+        sys.exit(f"error: unknown negative stock {args.negative_stock!r} "
+                 f"(have: {', '.join(negatives)})")
+    prt_id = args.print_stock or prints[0]
+    if prt_id in PRINT_STOCKS:
+        sys.exit(f"error: {prt_id!r} is a legacy print stock; photochemical "
+                 f"print profiles: {', '.join(prints)}")
+
+    try:
+        lights = tuple(int(x) for x in str(args.printer_lights).split(","))
+        if len(lights) != 3:
+            raise ValueError
+    except ValueError:
+        sys.exit("error: --printer-lights wants three integers R,G,B "
+                 "(e.g. 25,25,25)")
+
+    # Camera log develops INSIDE the negative LUT — straight to scene-linear
+    # exposure, never through a display image first. That is the point.
+    transfer = "rec709"
+    if args.input_log:
+        name = str(args.input_log).lower()
+        if name not in LOG_PRESETS:
+            sys.exit("error: photochemical mode develops log itself "
+                     f"(presets: {', '.join(LOG_PRESETS)}); manufacturer "
+                     ".cube input LUTs return with the input-LUT stage")
+        transfer = name
+        args.input_log = None    # keep the legacy log-develop stage off
+    return prt_id, lights, transfer
+
+
+def _setup_photochemical(args, ap) -> None:
+    """Resolve halation/grain/gauge into their photochemical form, warn once
+    about still-legacy knobs, generate (or cache-hit) every LUT the graph
+    needs, and stash it all on args._pc. Flags were already checked by
+    _validate_photochemical_flags."""
+    prt_id, lights, transfer = args._pc_flags
+
+    # Remaining legacy look knobs have no home in this chain yet — each
+    # returns at its PHYSICAL stage in a later milestone (weave at
+    # camera/projector, damage at presentation, softness split between
+    # camera and scanner...). Ignoring one silently would be a lie, so say
+    # it once, plainly. halation/grain/gauge left this list in 0.38.0.
+    legacy_only = ("look", "soften", "saturation",
+                   "chroma_soften", "plate_opacity", "grain_plate", "weave",
+                   "leak", "flare", "presence", "flicker", "corner_soften",
+                   "age", "bw", "no_curve", "no_vignette",
+                   "no_protect_skin", "match")
+    ignored = [k for k in legacy_only
+               if getattr(args, k, None) != ap.get_default(k)]
+    if ignored:
+        print("note  : legacy-only for now, ignored by the photochemical "
+              "pipeline: " + ", ".join(sorted(ignored)))
+    if args.lut:
+        print("note  : --lut applies AFTER the virtual scan, as an output "
+              "LUT (grade/input LUT placement arrives later)")
+
+    # Gauge: a smaller negative is enlarged more, so its grain reads larger
+    # and stronger and its halation halo spans more of the frame. Placeholder
+    # factors, tuned by eye against real footage like everything else.
+    gauge_amp = {"16mm": 1.5, "35mm": 1.0, "70mm": 0.7}[args.gauge]
+    gauge_div = {"16mm": 2.6, "35mm": 1.6, "70mm": 1.0}[args.gauge]
+    gauge_rad = {"16mm": 1.25, "35mm": 1.0, "70mm": 0.85}[args.gauge]
+
+    # Halation at its physical stage: an EXPOSURE spread before the negative
+    # curve, composited in LINEAR light (adding light in a log domain
+    # under-blooms — it must be linear). The negative splits into a linear
+    # exposure LUT, a linear->log shaper, and the response LUT; the halo
+    # thresholds/blurs/adds on the linear frame between exposure and shaper.
+    # --halation scales the stock's profiled halation (1 = as profiled, 0
+    # off); default on.
+    hal_scale = 1.0 if args.halation is None else max(0.0, args.halation)
+    hal_prof = _pc_mod.get_builtin(args.negative_stock).get("halation")
+    hal_on = bool(hal_prof) and hal_scale > 0 and hal_prof["strength"] > 0
+
+    # Grain at its physical stage: a density perturbation on the developed
+    # negative, between the negative and print. --grain keeps its legacy
+    # 0-20 feel (0 disables, ~7 default); gauge scales amplitude + clump.
+    grain_g = 7 if args.grain is None else max(0, args.grain)
+    grain_on = grain_g > 0
+
+    size = 33 if args.preview else 65
+    neg = _pc_mod.get_builtin(args.negative_stock)
+    prt = _pc_mod.get_builtin(prt_id)
+    headroom = _lut_mod.HALATION_HEADROOM
+    pcd = {
+        "negative": args.negative_stock,
+        "print": prt_id,
+        "lights": lights,
+        "transfer": transfer,
+        "size": size,
+        "print_lut": _lut_mod.print_lut(neg, prt, printer_lights=lights,
+                                        size=size),
+        "preview_lut": (_lut_mod.negative_preview_lut(neg, size=size)
+                        if args.debug_stage == "negative-preview" else None),
+        "hal": None,
+        "grain": None,
+    }
+    if hal_on:
+        # Decoupled halo: the BASE image develops through the exact fused
+        # negative LUT (shadows perfect). The HALO is a separate additive-
+        # light layer built in linear (exposure LUT), blurred, colored, and
+        # merged back only where it's nonzero — so the linear encoding's
+        # shadow crush never touches a clean-shadow pixel.
+        pcd["neg_lut"] = _lut_mod.negative_lut(neg, transfer=transfer,
+                                               size=size)
+        pcd["exp_lut"] = _lut_mod.exposure_lut(neg, transfer=transfer,
+                                               size=size, linear=True,
+                                               headroom=headroom)
+        pcd["shaper_lut"] = _lut_mod.log_shaper_lut(headroom=headroom,
+                                                    size=size)
+        pcd["resp_lut"] = _lut_mod.negative_response_lut(neg, size=size)
+        pcd["hal"] = {
+            "thr_lin": _pc_mod.MID_GRAY * (2.0 ** hal_prof["threshold_stops"]),
+            "headroom": headroom,
+            "radius2k": hal_prof["radius_pixels_at_2k"] * gauge_rad,
+            "strength": hal_prof["strength"] * hal_scale,
+            "matrix": hal_prof["matrix"],
+        }
+    else:
+        pcd["neg_lut"] = _lut_mod.negative_lut(neg, transfer=transfer,
+                                               size=size)
+    if grain_on:
+        pcd["grain"] = {
+            "g": max(1, round(grain_g * gauge_amp)),
+            "div": gauge_div,
+            "mask_lut": _lut_mod.grain_mask_lut(neg),
+        }
+    args._pc = pcd
+
+    if args.dump_luts:
+        for k in ("neg_lut", "exp_lut", "shaper_lut", "resp_lut",
+                  "print_lut", "preview_lut"):
+            src = pcd.get(k)
+            if src:
+                dst = Path.cwd() / src.name
+                shutil.copy2(src, dst)
+                print(f"lut   : {dst}")
+        if pcd["grain"]:
+            dst = Path.cwd() / pcd["grain"]["mask_lut"].name
+            shutil.copy2(pcd["grain"]["mask_lut"], dst)
+            print(f"lut   : {dst}")
+    if args.dump_pipeline:
+        n = [None]
+
+        def step(text):
+            n[0] = (n[0] or 0) + 1
+            print(f"  {n[0]:2d}. {text}")
+        print("photochemical stages (composed transforms noted):")
+        step("source normalize               conditional ffmpeg prefix")
+        if hal_on:
+            step(f"{transfer} decode -> LINEAR exposure   composed into "
+                 "exposure LUT (+ sensitivity matrix)")
+            step("HALATION: threshold highlights, blur, stock matrix, ADD"
+                 "   ffmpeg, linear light")
+            step("linear -> scene-log exposure     log shaper LUT")
+            step("characteristic curves          composed into response LUT")
+        else:
+            step(f"{transfer} decode -> scene linear     composed into "
+                 "negative LUT")
+            step("stock sensitivity matrix + characteristic curves   "
+                 "composed into negative LUT")
+        step("NEGATIVE DENSITY (normalized)     the frame between LUTs")
+        if grain_on:
+            step("GRAIN: density perturbation, gauge-scaled clumps, "
+                 "density-masked   ffmpeg, density space")
+        step("density -> transmittance          composed into print LUT")
+        step(f"printer lights {lights[0]},{lights[1]},{lights[2]} "
+             "(+calibrated trims)   composed into print LUT")
+        step("printer matrix + print curves     composed into print LUT")
+        step("print density -> projection -> display encode   "
+             "composed into print LUT")
+        print(f"  LUT resolution {size}^3, tetrahedral; "
+              "working format gbrp16le")
+        for k in ("neg_lut", "exp_lut", "shaper_lut", "resp_lut", "print_lut"):
+            if pcd.get(k):
+                print(f"  {k:10}: {pcd[k]}")
+        if pcd["grain"]:
+            print(f"  grainmask: {pcd['grain']['mask_lut']}")
+
+
+def build_photochemical_graph(args, info: dict) -> str:
+    """The photochemical filtergraph. Conditional normalize, 16-bit planar
+    RGB, then the film process in its physical order: exposure (halation
+    spreads HERE, before the negative curve compresses and colors it) ->
+    negative density (grain perturbs HERE, masked by density, before the
+    print sees it) -> print -> optional user output LUT -> final format.
+    Weave, damage and softness arrive at their stages in later milestones —
+    resist the urge to bolt legacy filters onto this chain."""
+    pc = args._pc
+    pre = []
+    w_px, h_px = info["width"], info["height"]
+    cw, ch = w_px, h_px
+    src_fps = info["fps"]
+    out_fps = src_fps
+
+    if args.ratio:
+        r = args.ratio
+        sr = w_px / h_px
+        if abs(r - sr) > 0.01:
+            if r > sr:
+                cw, ch = w_px, int(w_px / r / 2) * 2
+            else:
+                cw, ch = int(h_px * r / 2) * 2, h_px
+            cw, ch = max(2, cw), max(2, ch)
+            pre.append(f"crop={cw}:{ch}")
+    if args.conform:
+        if src_fps > 30:
+            pre.append("tmix=frames=2")
+            pre.append("fps=24")
+            out_fps = 24.0
+        elif src_fps > 24.5:
+            pre.append("fps=24")
+            out_fps = 24.0
+
+    head = []
+    norm = source_normalize(info, args)
+    if norm:
+        head.append(norm)
+    head.append("format=gbrp16le")
+    prefix = "[0:v]" + ",".join(pre + head)
+    graph = ""
+    hal, grain = pc["hal"], pc["grain"]
+
+    if hal:
+        # Decoupled halation. Two developments of the frame, merged by a
+        # halo-presence mask:
+        #   BASE   = source -> fused negative LUT -> density  (exact; the
+        #            linear encoding never touches it, so shadows are perfect)
+        #   HALOED = source -> LINEAR exposure -> (+ colored, blurred halo)
+        #            -> log shaper -> response -> density  (correct wherever
+        #            light is present, i.e. highlights and their bloom)
+        # The mask is the blurred highlight itself: 1 in the bloom, 0 in
+        # clean shadow. maskedmerge shows HALOED in the bloom and BASE
+        # everywhere else — so the halo blooms in linear light, while the
+        # linear encoding's shadow crush is masked away from every pixel
+        # that would reveal it.
+        hr = hal["headroom"]
+        t = hal["thr_lin"] / hr            # threshold in the linear frame
+        # Blur reach scales with frame width from the profiled 2K radius,
+        # floored generously so the bloom is visible even on small frames.
+        sigma = max(24.0, hal["radius2k"] * cw / 2048.0)
+        s = hal["strength"]
+        M = hal["matrix"]
+        coef = []                          # rows unit-summed: matrix recolors,
+        for i in range(3):                 # strength is the halo gain
+            rs = sum(M[i]) or 1.0
+            coef.append([M[i][j] / rs * s for j in range(3)])
+        mix = (f"colorchannelmixer="
+               f"rr={coef[0][0]:.4f}:rg={coef[0][1]:.4f}:rb={coef[0][2]:.4f}:"
+               f"gr={coef[1][0]:.4f}:gg={coef[1][1]:.4f}:gb={coef[1][2]:.4f}:"
+               f"br={coef[2][0]:.4f}:bg={coef[2][1]:.4f}:bb={coef[2][2]:.4f}")
+        graph += (
+            f"{prefix},split=2[sbase][slin];"
+            # exact base development
+            f"[sbase]lut3d=file={fpath(pc['neg_lut'])}:interp=tetrahedral[dbase];"
+            # linear exposure, split into the light we add halo to and the
+            # highlight we build the halo from
+            f"[slin]lut3d=file={fpath(pc['exp_lut'])}:interp=tetrahedral"
+            f"[lin];[lin]split=2[linb][linh];"
+            f"[linh]colorlevels=rimin={t:.5f}:gimin={t:.5f}:bimin={t:.5f}:"
+            f"romin=0:romax=1:gomin=0:gomax=1:bomin=0:bomax=1,"
+            f"gblur=sigma={sigma:.2f}[hbl];"
+            f"[hbl]split=2[hcol][hmaskraw];"
+            # colored halo, added to the linear base, then developed
+            f"[hcol]{mix}[halo];"
+            f"[linb][halo]blend=all_mode=addition[lit];"
+            f"[lit]lut3d=file={fpath(pc['shaper_lut'])}:interp=tetrahedral,"
+            f"lut3d=file={fpath(pc['resp_lut'])}:interp=tetrahedral[dhaloed];"
+            # mask: the blurred highlight IS the halo-presence signal. A mild
+            # gain lets even the faint bloom tail cross-fade in HALOED, while
+            # halo==0 (clean shadow) stays exactly on BASE — so the bloom
+            # shows across its full falloff and the shadow crush never leaks.
+            f"[hmaskraw]colorlevels=rimax=0.5:gimax=0.5:bimax=0.5[hmask];"
+            f"[dbase][dhaloed][hmask]maskedmerge[dens]"
+        )
+    else:
+        graph += (f"{prefix},"
+                  f"lut3d=file={fpath(pc['neg_lut'])}:interp=tetrahedral[dens]")
+    cur = "[dens]"
+
+    if grain:
+        # Density space: additive perturbation of the developed negative.
+        # A mid-gray plate carries the noise (grainmerge is mid-anchored, so
+        # the density mean is untouched); gauge sets the clump size via the
+        # plate resolution; the profile's density curve — via a small 3D LUT
+        # mask — puts the grain where the emulsion wears it: in the mids.
+        # Luma noise refreshes every frame (t+u); chroma noise is coarser and
+        # temporally averaged (t+u+a) so color grain reads as dye clouds,
+        # not fizz — same anti-boil recipe the legacy chain proved.
+        g = grain["g"]
+        gw = max(2, int(cw / grain["div"] / 2) * 2)
+        gh = max(2, int(ch / grain["div"] / 2) * 2)
+        upscale = ("" if grain["div"] == 1.0
+                   else f",scale={cw}:{ch}:flags=bilinear")
+        graph += (
+            f";color=c=0x808080:s={gw}x{gh}:r={out_fps:g},"
+            f"noise=c0s={g}:c0f=t+u:"
+            f"c1s={max(1, g // 3)}:c1f=t+u+a:c2s={max(1, g // 3)}:c2f=t+u+a"
+            f"{upscale},format=gbrp16le,gblur=sigma=1.2[gnz];"
+            f"{cur}split=3[db][dg][dm];"
+            f"[dg][gnz]blend=all_mode=grainmerge:shortest=1[dgr];"
+            f"[dm]lut3d=file={fpath(grain['mask_lut'])}:interp=tetrahedral[gm];"
+            f"[db][dgr][gm]maskedmerge[dgrained]"
+        )
+        cur = "[dgrained]"
+
+    tail = []
+    if args.debug_stage == "negative-preview":
+        tail.append(
+            f"lut3d=file={fpath(pc['preview_lut'])}:interp=tetrahedral")
+    elif args.debug_stage != "negative-density":
+        tail.append(
+            f"lut3d=file={fpath(pc['print_lut'])}:interp=tetrahedral")
+        if args.lut:
+            tail.append(f"lut3d=file={fpath(args.lut)}")
+
+    if args.depth == 10:
+        ofmt = ("yuv422p10le" if args.codec in ("prores", "dnxhr")
+                else "yuv420p10le")
+    else:
+        ofmt = "yuv420p"
+    tail.append(f"format={ofmt}")
+    return graph + f";{cur}" + ",".join(tail) + "[vout]"
+
+
 def build_filtergraph(args, info: dict) -> str:
     p = dict(LOOKS[args.look])  # copy preset, then apply CLI overrides
     for key in ("grain", "halation", "soften", "saturation", "plate_opacity"):
@@ -985,6 +1351,40 @@ def build_filtergraph(args, info: dict) -> str:
 
 
 def summarize_settings(args) -> str:
+    if getattr(args, "pipeline", "legacy") == "photochemical":
+        pc = getattr(args, "_pc", {})
+        bits = [f"photochemical: {pc.get('negative', '?')} → "
+                f"{pc.get('print', '?')}"]
+        lt = pc.get("lights")
+        if lt and lt != (25, 25, 25):
+            bits.append(f"lights {lt[0]},{lt[1]},{lt[2]}")
+        if pc.get("transfer", "rec709") != "rec709":
+            bits.append(f"log: {pc['transfer']}")
+        if pc.get("hal") is None:
+            bits.append("halation off")
+        elif args.halation is not None and args.halation != 1.0:
+            bits.append(f"halation ×{args.halation:g}")
+        if pc.get("grain") is None:
+            bits.append("grain off")
+        elif args.grain is not None and args.grain != 7:
+            bits.append(f"grain {args.grain}")
+        if args.gauge != "35mm":
+            bits.append(args.gauge)
+        if getattr(args, "debug_stage", None):
+            bits.append(f"debug: {args.debug_stage}")
+        if args.depth == 10:
+            bits.append("10-bit")
+        if args.codec != "h264":
+            bits.append(args.codec)
+        if args.conform:
+            bits.append("24fps/180° conform")
+        if args.ratio:
+            bits.append(f"{args.ratio:g}:1")
+        if args.lut:
+            bits.append(f"output LUT: {args.lut.name}")
+        if args.preview:
+            bits.append(f"preview {args.preview:g}s")
+        return " + ".join(bits)
     bits = [args.look]
     if getattr(args, "input_log", None):
         n = str(args.input_log)
@@ -1025,6 +1425,10 @@ def summarize_settings(args) -> str:
         bits.append("compare split")
     if args.look_file:
         bits.append(f"look file: {Path(args.look_file).name}")
+    # Identify the active pipeline once another one exists to confuse with.
+    # getattr: panel/test Namespaces predate the flag and must keep working.
+    if getattr(args, "pipeline", "legacy") != "legacy":
+        bits.append(f"pipeline: {args.pipeline}")
     return " + ".join(bits)
 
 
@@ -1088,7 +1492,8 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
     progress_cb, if given, is called with a 0-100 percentage as ffmpeg runs."""
     res = {"src": src, "out": out, "ok": False, "error": "",
            "fps_in": None, "fps_out": None, "size": None, "dur": None,
-           "thumb_before": "", "thumb_after": ""}
+           "thumb_before": "", "thumb_after": "",
+           "pipeline": getattr(args, "pipeline", "legacy")}
     try:
         info = probe(src)
     except RuntimeError as exc:
@@ -1107,11 +1512,23 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
 
     bpp = info.get("bpp")
     if (bpp is not None and bpp < 0.08 and getattr(args, "grain", None) is None
-            and not getattr(args, "no_compression_adapt", False)):
+            and not getattr(args, "no_compression_adapt", False)
+            and getattr(args, "pipeline", "legacy") == "legacy"):
         print(f"note  : heavily-compressed source ({bpp:.3f} bpp) — easing grain "
               "back to avoid amplifying blocking (--no-compression-adapt to keep full)")
 
-    graph = build_filtergraph(args, info)
+    graph = None
+    if getattr(args, "pipeline", "legacy") == "photochemical":
+        if info.get("hdr"):
+            res["error"] = ("HDR sources aren't supported by the "
+                            "photochemical pipeline yet (linear HDR mapping "
+                            "into the negative arrives with the color-"
+                            "management stage) — use --pipeline legacy")
+            print(f"input : {src}\nFAILED: {res['error']}\n")
+            return res
+        graph = build_photochemical_graph(args, info)
+    else:
+        graph = build_filtergraph(args, info)
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-stats",
            "-i", str(src)]
     if args.grain_plate:
@@ -2281,11 +2698,17 @@ def main() -> None:
                     help="split-screen output: left half original, right half "
                          "graded, with a divider line — for dialing in a look "
                          "(pairs well with --preview)")
-    ap.add_argument("--print-stock", choices=sorted(PRINT_STOCKS), default=None,
+    ap.add_argument("--print-stock",
+                    choices=sorted(PRINT_STOCKS) + (
+                        sorted(p for p, d in _pc_mod.BUILTIN_PROFILES.items()
+                               if d["profile_type"] == "print")
+                        if _pc_mod else []),
+                    default=None,
                     help="built-in subtractive print-film color engine "
                          "(density curves + interlayer crosstalk); replaces "
                          "the built-in curve and split tone; your --lut "
-                         "still overrides it")
+                         "still overrides it. With --pipeline photochemical "
+                         "this selects the virtual print stock instead")
     ap.add_argument("--lut", type=Path, default=None, metavar="FILE.cube",
                     help="apply a film-stock 3D LUT (.cube); disables built-in split tone")
     ap.add_argument("--grain-plate", type=Path, default=None, metavar="FILE",
@@ -2293,9 +2716,15 @@ def main() -> None:
     ap.add_argument("--plate-opacity", type=float, default=None, metavar="0-1",
                     help="grain plate blend opacity override")
     ap.add_argument("--grain", type=int, default=None, metavar="0-20",
-                    help="synthesized grain strength override (0 disables)")
+                    help="synthesized grain strength override (0 disables). "
+                         "With --pipeline photochemical: grain is a density "
+                         "perturbation on the virtual negative, before "
+                         "printing — masked by density, scaled by gauge")
     ap.add_argument("--halation", type=float, default=None, metavar="0-1",
-                    help="halation/bloom strength override (0 disables)")
+                    help="halation/bloom strength override (0 disables). "
+                         "With --pipeline photochemical: scales the stock's "
+                         "own profiled halation (1 = as profiled), applied "
+                         "in exposure space before the negative curve")
     ap.add_argument("--soften", type=float, default=None, metavar="0-1.5",
                     help="softening strength override (0 disables)")
     ap.add_argument("--saturation", type=float, default=None, metavar="0-2",
@@ -2397,6 +2826,35 @@ def main() -> None:
                     help="x264 quality (lower = better; grain needs bitrate)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the ffmpeg command without running it")
+    ap.add_argument("--pipeline", choices=("legacy", "photochemical"),
+                    default="legacy",
+                    help="processing pipeline. 'legacy' is the current filter "
+                         "chain. 'photochemical' renders through a simulated "
+                         "film process: virtual negative -> printer lights -> "
+                         "virtual print stock -> scan")
+    ap.add_argument("--negative-stock", default="modern_500t",
+                    metavar="PROFILE",
+                    help="photochemical only: the virtual camera negative "
+                         "(generic profiles; descriptive names, not "
+                         "commercial-stock claims)")
+    ap.add_argument("--printer-lights", default="25,25,25", metavar="R,G,B",
+                    help="photochemical only: printer-light points around the "
+                         "calibrated neutral 25,25,25 — like a real timer, "
+                         "MORE light in a channel prints DENSER, i.e. less "
+                         "of that color (try 25,25,23 for warmth)")
+    ap.add_argument("--debug-stage",
+                    choices=("negative-density", "negative-preview"),
+                    default=None,
+                    help="photochemical only: render a pipeline intermediate "
+                         "instead of the final print — the normalized "
+                         "negative-density record, or the negative as "
+                         "transmitted light")
+    ap.add_argument("--dump-luts", action="store_true",
+                    help="photochemical only: copy the generated negative and "
+                         "print LUTs next to the output")
+    ap.add_argument("--dump-pipeline", action="store_true",
+                    help="photochemical only: print the ordered stage list "
+                         "and where each transform runs")
     args = ap.parse_args()
 
     # Windows consoles/redirects can use legacy code pages that choke on
@@ -2406,6 +2864,15 @@ def main() -> None:
             stream.reconfigure(errors="replace")
         except (AttributeError, ValueError):
             pass
+
+    # Flag validation runs before any filesystem or ffmpeg checks: a typo'd
+    # stock name must say so, not hide behind "file not found".
+    if args.pipeline == "photochemical":
+        args._pc_flags = _validate_photochemical_flags(args, ap)
+    elif args.print_stock and args.print_stock not in PRINT_STOCKS:
+        sys.exit(f"error: {args.print_stock!r} is a photochemical print "
+                 f"profile — add --pipeline photochemical, or pick a legacy "
+                 f"stock: {', '.join(sorted(PRINT_STOCKS))}")
 
     global FFMPEG, FFPROBE
     FFMPEG = find_tool("ffmpeg")
@@ -2433,6 +2900,9 @@ def main() -> None:
         apply_style(args, ap)
     if args.save_look:
         save_look_file(args)
+
+    if args.pipeline == "photochemical":
+        _setup_photochemical(args, ap)
 
     if args.ui:
         if args.input is not None and args.input.is_dir():

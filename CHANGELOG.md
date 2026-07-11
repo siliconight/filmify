@@ -3,6 +3,165 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.39.0] — 2026-07-11
+
+### Added
+- **Halation ships — composited in linear light (Milestone 2 complete).**
+  With `--pipeline photochemical`, a bright highlight now blooms into its
+  surroundings the way film does: light reflects off the film base and
+  re-exposes the emulsion nearby. It runs at its physical stage — an
+  exposure spread *before* the negative curve — so the negative then
+  compresses and tints the halo automatically: a blown highlight blooms
+  hard, a mid highlight barely. That asymmetry isn't coded; it falls out
+  of the characteristic curve. The halo carries the stock's (red-biased)
+  halation color via the profile matrix. `--halation` scales the profiled
+  strength (1 = as profiled, 0 off); on by default.
+- **Decoupled-halo architecture.** Halation and the negative's shadow
+  detail want opposite encodings — the halo must add in *linear* light,
+  the negative curve must see *log* to resolve shadows, and one uniform
+  3D LUT can't serve both (a linear grid collapses mid-gray-and-below into
+  a handful of nodes). filmify now develops the base image through the
+  exact fused negative LUT (shadows perfect) and builds the halo as a
+  separate linear-light layer — threshold, blur, stock-matrix color — that
+  is merged back *only where it's nonzero*, via a halo-presence mask. The
+  linear encoding therefore never touches a clean-shadow pixel, so the
+  bloom is physically correct and shadows stay exact. Verified: the bloom
+  bleeds past a highlight edge while far clean shadow is byte-for-byte the
+  halation-off development.
+- New LUT generators (`lut_generation.py`): a linear-mode exposure LUT
+  (`linear=True`, with an above-white headroom ceiling so the halo has
+  room to add) and a stock-independent `log_shaper_lut` that re-encodes the
+  linear halo frame to scene-log for the response LUT. Both cached and
+  deterministic like the rest.
+- `--dump-pipeline` now shows the linear-light halation stages; the WIP
+  `--experimental-halation` flag is gone (halation is a first-class stage).
+
+### Notes
+- Legacy pipeline untouched; halation-off photochemical output is
+  unchanged from 0.38.0. All existing tests green; the halation bloom test
+  that was `xfail` in 0.38.0 now passes.
+
+## [0.38.0] — 2026-07-11
+
+### Added
+- **Photochemical grain lives in the negative (Milestone 2, part 1).** With
+  `--pipeline photochemical`, grain is now a density perturbation on the
+  developed virtual negative — injected between the negative and print LUTs,
+  in the density domain — not an overlay on the finished image. It is
+  masked by a per-stock density curve (a small generated 3D LUT), so the
+  mids wear grain while D-min and D-max stay quieter, the way film does;
+  the print stock then sees the grained negative and carries it through.
+  Luma noise refreshes every frame, chroma noise is coarser and temporally
+  averaged so color grain reads as dye clouds rather than fizz.
+  `--grain 0-20` tunes it (0 disables, ~7 default); `--gauge` scales both
+  amplitude and clump size (16mm coarser, 70mm finer). Verified temporal,
+  mean-stable (grain doesn't shift exposure), and density-masked.
+- **Split-negative scaffolding for halation.** The negative LUT can now
+  split into an exposure LUT (source → scene-log exposure) and a response
+  LUT (scene-log exposure → density) around an exposure-space frame, so a
+  spatial effect like halation can run at its physical stage — before the
+  characteristic curve. Composition is byte-exact: response∘exposure
+  reproduces the fused negative LUT, so the split never disturbs the base
+  image. Groundwork for the next release.
+
+### Known limitations
+- **Halation is experimental and off by default.** It belongs in exposure
+  space before the negative curve, and the split-negative path above is
+  ready for it, but a faithful halo has to be composited in *linear light*
+  (adding light in a log domain under-blooms) — that needs a linear↔log
+  shaper in the graph, which lands in a later milestone. `--experimental-
+  halation` enables the current work-in-progress path (safe — it uses
+  additive compositing, which ffmpeg computes correctly on planar formats,
+  unlike `blend=screen`, which it does not — so the base image and far
+  pixels are untouched; only the bloom itself is weak). Without that flag,
+  `--halation` is politely ignored in photochemical mode with a note.
+
+### Notes
+- Found and worked around an ffmpeg bug: `blend=all_mode=screen` on 16-bit
+  integer planar (`gbrp16le`) miscomputes badly (screen of gray over black
+  returns near-white). The photochemical chain uses `addition`, `grainmerge`
+  and `maskedmerge`, all of which are correct on that format.
+- Legacy pipeline untouched; all existing tests green.
+
+## [0.37.0] — 2026-07-10
+
+### Added
+- **The photochemical pipeline renders (Milestone 1).** `--pipeline
+  photochemical` now processes footage through the simulated film chain:
+  source → scene-linear light → virtual camera negative (per-layer
+  characteristic curves, stock sensitivity matrix) → the normalized
+  negative-density intermediate → printer lights → virtual print stock →
+  projection → screen. Two generated, cached 3D LUTs carry the chemistry
+  (`lut_generation.py`, new); the frame between them is literally the
+  negative — which is where grain gets injected next milestone.
+  - **Printer timing, like a real lab.** At LUT generation the printer is
+    calibrated per channel (bisection against the print curve) so an
+    18%-gray scene prints to a neutral mid on screen — the negative's
+    per-channel base densities are neutralized by the printer, not hidden
+    in the curves. `--printer-lights R,G,B` offsets around that calibrated
+    25,25,25 neutral in profile-defined light points; more light in a
+    channel prints denser, i.e. LESS of that color, exactly like a timer.
+  - `--negative-stock` selects the virtual negative (`modern_500t` for
+    now); `--print-stock` selects the virtual print profile
+    (`neutral_release`) when the photochemical pipeline is active.
+  - **Log develops into the negative, not into a display image.**
+    `--input-log slog3|vlog|cineon` in photochemical mode decodes straight
+    to scene-linear exposure inside the negative LUT — the whole point of
+    the architecture.
+  - **Stage inspection:** `--debug-stage negative-density` renders the
+    normalized density record; `--debug-stage negative-preview` shows the
+    negative as transmitted light. `--dump-luts` copies the generated
+    `.cube` files next to you; `--dump-pipeline` prints the ordered stage
+    list and which LUT carries each transform.
+  - LUTs cache under the platform cache directory, keyed by a content hash
+    of everything that matters (profiles, lights, transfer, size,
+    generator version) and nothing that doesn't; regeneration is
+    byte-identical. 65³ generation is well under a second.
+  - Guard rails: legacy-only knobs (grain, halation, weave, styles, look
+    files…) are loudly listed as ignored rather than silently dropped —
+    each returns at its physical stage in later milestones. Schema-1 look
+    files, `--save-look`, `--compare`, the panel, and HDR sources are
+    blocked in photochemical mode with pointers to what to use instead.
+    Flag validation runs before any file checks, so a typo'd stock name
+    says so instead of hiding behind "file not found".
+  - Tests: generated-LUT validity and cache determinism, a full-chain
+    ffmpeg ramp render asserting monotone, neutral output with mid-gray
+    anchored on screen, printer-light channel isolation, and a
+    density-is-not-`1-RGB` check (TDD acceptance 27.1 / 27.3 as code).
+  - The legacy pipeline is untouched: identical filtergraphs, identical
+    output, all existing tests green.
+
+## [0.36.0] — 2026-07-10
+
+### Added
+- **The photochemical pipeline's foundation (Milestone 0).** filmify is
+  headed toward processing footage through a simulated photochemical chain —
+  virtual negative, laboratory development, printer lights, print stock —
+  instead of layering effects over a finished image. This release lays the
+  ground without changing a single rendered pixel:
+  - `--pipeline legacy|photochemical`: the pipeline is now an explicit,
+    reported choice. `legacy` (the default) is the current chain, unchanged.
+    Selecting `photochemical` exits with a clear not-ready message — it will
+    become renderable in coming releases, stage by stage.
+  - `photochemical.py`: density mathematics (optical density ↔
+    transmittance), normalized scene-log exposure encoding, monotone-cubic
+    characteristic-curve interpolation with hard no-overshoot guarantees,
+    a stock-profile JSON schema with a validation CLI
+    (`python photochemical.py --validate my_stock.json`), deterministic
+    content fingerprints (the future LUT-cache key), and two generic
+    built-in placeholder profiles (`modern_500t` negative,
+    `neutral_release` print — descriptive names, deliberately not claims
+    about any commercial stock). Stdlib only, like everything filmify ships.
+  - `test_photochemical.py`: unit tests locking the invariants — density
+    round trips across 0–5D, curve monotonicity/bounds/finiteness, schema
+    validation catches broken profiles, fingerprints are deterministic and
+    order-independent, and schema-version-1 look files keep selecting the
+    legacy pipeline (`pipeline` is structurally barred from `LOOK_KEYS`
+    until versioned look schema v2 lands). Wired into CI on all three OSes.
+  - The render report now identifies the pipeline (shown only once a
+    non-legacy pipeline is in play, so today's reports are unchanged).
+  - `photochemical.py` ships inside both user packages.
+
 ## [0.35.3] — 2026-07-02
 
 ### Fixed

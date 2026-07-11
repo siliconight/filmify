@@ -26,7 +26,7 @@ VERSION = re.search(r'__version__ = "([^"]+)"',
                     (ROOT / "filmify.py").read_text())[1]
 
 # Files the engine needs, hidden inside app-files/
-SHARED = ["filmify.py"]
+SHARED = ["filmify.py", "photochemical.py", "lut_generation.py"]
 MAC_HIDDEN = ["filmify-launch.sh", "make-mac-app.command",
               "filmify_icon_1024.png"]
 WIN_HIDDEN = ["filmify-quiet.vbs", "Make filmify app.bat",
