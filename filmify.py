@@ -58,7 +58,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.42.2"
+__version__ = "0.42.3"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -476,6 +476,7 @@ def probe(path: Path) -> dict:
         "-show_entries",
         "stream=avg_frame_rate,width,height,pix_fmt,color_range,"
         "color_space,color_primaries,color_transfer,bit_rate:"
+        "stream_side_data=rotation:stream_tags=rotate:"
         "format=duration,bit_rate",
         "-of", "json", str(path),
     ]
@@ -497,12 +498,37 @@ def probe(path: Path) -> dict:
             return 0
     bitrate = _int(info.get("bit_rate")) or _int(data.get("format", {}).get("bit_rate"))
     w, h = info["width"], info["height"]
+
+    # Rotated video (portrait phone clips): the container codes landscape
+    # frames plus a display-rotation side data entry, ffprobe reports the
+    # CODED size, but ffmpeg autorotates on decode — so the frames entering
+    # the filtergraph are transposed. Every generated plate (grain, halation)
+    # is sized from this probe, so report the DECODED orientation or every
+    # blend in the graph fails with a size mismatch. Both the modern
+    # displaymatrix side data and the legacy rotate tag are honored.
+    rot = 0
+    for sd in info.get("side_data_list") or []:
+        if sd.get("rotation") is not None:
+            try:
+                rot = int(round(float(sd["rotation"])))
+            except (TypeError, ValueError):
+                rot = 0
+            break
+    if not rot:
+        try:
+            rot = int(round(float((info.get("tags") or {}).get("rotate", 0))))
+        except (TypeError, ValueError):
+            rot = 0
+    if abs(rot) % 180 == 90:
+        w, h = h, w
+
     # bits per pixel per frame — the compression tell. ~0.3+ is a clean master;
     # under ~0.06 is a heavily-compressed source (streaming rip, old phone clip).
     bpp = (bitrate / (w * h * fps)) if (bitrate and w and h and fps) else None
 
     return {"fps": fps, "width": w, "height": h,
             "duration": dur,
+            "rotation": rot,
             "pix_fmt": info.get("pix_fmt") or "",
             "color_range": info.get("color_range") or "",
             "color_space": info.get("color_space") or "",

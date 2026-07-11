@@ -657,6 +657,53 @@ def test_grain_is_multiscale_and_neutral():
              f"vs luma {luma_noise:.2f}")
 
 
+def test_rotated_video_renders():
+    """Portrait phone video: coded landscape + a display-rotation side data
+    entry. ffprobe reports the coded size but ffmpeg autorotates on decode,
+    so every generated plate must be sized to the DECODED orientation — this
+    was the first bug real-machine testing found (every pipeline failed with
+    a blend size mismatch). Both pipelines must render it, output upright."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        plain = td / "plain.mp4"
+        rot = td / "rot.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+             "testsrc2=s=320x180:r=24:d=0.4",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             str(plain)], check=True, timeout=120)
+        mk = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-display_rotation", "90",
+             "-i", str(plain), "-c", "copy", str(rot)],
+            capture_output=True, text=True, timeout=120)
+        if mk.returncode != 0:
+            return  # this ffmpeg can't author rotation metadata; skip
+
+        def dims(path):
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                 str(path)], capture_output=True, text=True, timeout=60)
+            w, h = out.stdout.strip().split(",")[:2]
+            return int(w), int(h)
+
+        # photochemical
+        pc_out = td / "pc.mp4"
+        _render(rot, pc_out, "--grain", "5")
+        assert dims(pc_out) == (180, 320), \
+            f"photochemical lost the rotation: {dims(pc_out)}"
+        # legacy (the original failing case: grain-plate blend size mismatch)
+        leg_out = td / "leg.mp4"
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "filmify.py"), str(rot),
+             "-o", str(leg_out), "--no-report", "--no-hwaccel"],
+            capture_output=True, text=True, timeout=300)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert dims(leg_out) == (180, 320), \
+            f"legacy lost the rotation: {dims(leg_out)}"
+
+
 def test_schema_v1_looks_stay_legacy():
     """TDD 15.1: schema-version-1 look files must keep selecting the legacy
     pipeline. Enforced structurally: 'pipeline' must not join LOOK_KEYS until

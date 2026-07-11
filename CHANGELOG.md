@@ -3,6 +3,22 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.42.3] — 2026-07-11
+
+### Fixed
+- **Rotated video (portrait phone clips) renders instead of failing.** The
+  first bug found by real-machine testing: portrait phone footage is coded
+  landscape plus a display-rotation entry, ffprobe reports the coded size,
+  but ffmpeg autorotates on decode — so every plate filmify generated
+  (grain, halation) was sized to the wrong orientation and the graph died
+  with a blend size mismatch ("First input link top parameters do not
+  match…", exit code 4294967274 on Windows) in every pipeline. The probe
+  now reads the rotation (displaymatrix side data or the legacy rotate
+  tag) and reports the decoded orientation, so all graphs build at the
+  size the frames actually arrive in. Output is upright, rotation baked
+  into pixels. Regression-tested in both pipelines, and verified against
+  both ffmpeg 6.1 and current ffmpeg master.
+
 ## [0.42.2] — 2026-07-11
 
 ### Fixed
