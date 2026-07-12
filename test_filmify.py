@@ -124,8 +124,14 @@ def run_all():
     # 3. Filtergraph builds for every style without error
     info = fm.probe(clip)
     for style in fm.STYLES:
+        if fm.STYLES[style].get("pipeline") == "photochemical":
+            # film-engine styles build through the photochemical graph,
+            # covered by test_photochemical (needs LUT setup, not this loop)
+            continue
         a = base_args()
         for k, v in fm.STYLES[style].items():
+            if k == "pipeline":
+                continue
             setattr(a, k, v)
         try:
             g = fm.build_filtergraph(a, info)

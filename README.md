@@ -18,12 +18,15 @@ motion with a 180° shutter feel, gentle softness, restrained color, halation
 glow around bright lights, and organic grain. No NLE, no plugins, no
 subscription — just Python and FFmpeg.
 
-There are two engines under the hood. The **default** pipeline is the fast,
-proven finishing chain described throughout this README. The newer
-**photochemical** pipeline (`--pipeline photochemical`) simulates the actual
-film chain — virtual negative, printer lights, print stock — and carries
-filmify's most film-accurate grain and halation. See
-[The photochemical pipeline](#the-photochemical-pipeline) below.
+There are two engines under the hood, and the **photochemical film chain
+is the default**: it simulates the actual film process — virtual negative,
+printer lights, print stock — and carries filmify's most film-accurate
+grain and halation. See
+[The photochemical pipeline](#the-photochemical-pipeline). The **classic**
+engine (the finishing chain much of this README describes) remains fully
+available: it's auto-selected — with a printed note — whenever you use a
+classic-only option or style (B&W, light leak, flare, aged print, the look
+intensities), or force it with `--pipeline legacy`.
 
 ## Your first five minutes
 
@@ -210,14 +213,15 @@ A style is just a flag set — every individual flag still overrides it, and
 ## The photochemical pipeline
 
 ```sh
-python filmify.py clip.mp4 --pipeline photochemical
+python filmify.py clip.mp4        # the film chain IS the default
 ```
 
-The default pipeline applies film-like *effects* to your finished image.
+The classic pipeline applies film-like *effects* to your finished image.
 The photochemical pipeline instead simulates the **film chain itself** — it
 develops your footage the way a lab does, and the film character falls out
-of the physics instead of being painted on. It's opt-in while it settles in;
-the default pipeline stays the default.
+of the physics instead of being painted on. It is filmify's default engine;
+the classic chain remains one flag away (`--pipeline legacy`) and is
+auto-selected with a note whenever you reach for classic-only character.
 
 What actually happens, in order:
 
@@ -268,12 +272,21 @@ transport, `--flicker` lamp breathing, `--vignette 0-1` projection-lens
 falloff — opt-in here, because corner falloff is lens character, not
 something the film process produces).
 
-Two honest notes. The photochemical grain graph is heavier than the default
+In the control panel, the Engine selector defaults to film: negative
+stock, print profile, printer lights (R,G,B), and the opt-in lens vignette
+are right there, and the gallery leads with the film styles (`film`,
+`film-16mm`, `film-scope`). Saved looks record their engine (schema 2) and
+round-trip it; older look files keep loading exactly as before, on the
+classic engine.
+
+Two honest notes. The photochemical grain graph is heavier than the classic
 pipeline's, so grained renders take noticeably longer — fine for the
 dial-it-in-then-batch-overnight workflow, worth knowing before a rush job.
-And a few features (`--style`, `--look-file`, `--ui`, HDR input, leak,
-flare, age) aren't wired into photochemical mode yet; it tells you plainly
-if you use them, and each lands at its physical stage.
+And a few characters still live only in the classic engine (B&W, light
+leak, flare, aged print, `--compare`, HDR input) — using them selects the
+classic engine with a printed note, and each will land at its physical
+stage in the film chain over time (leak and flare belong in exposure, B&W
+as a mono stock, age at presentation).
 
 ## The control panel
 
@@ -389,7 +402,8 @@ without running it.
 
 ## What the pipeline does (in order)
 
-This is the **default** pipeline. For the film-chain simulation, see
+This is the **classic** engine's chain. For the film-chain simulation —
+filmify's default — see
 [The photochemical pipeline](#the-photochemical-pipeline).
 
 0. **Source development** — HDR (HLG/PQ) is tone-mapped to Rec.709; full-range

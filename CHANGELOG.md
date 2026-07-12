@@ -3,6 +3,79 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.44.0] — 2026-07-11
+
+### Changed
+- **The photochemical film chain is now filmify's default engine — in the
+  CLI and in the panel.** `python filmify.py clip.mp4` develops through the
+  virtual negative → printer lights → print stock chain, with silver-halide
+  density grain and linear-light halation. This lands after the chain was
+  validated on a real machine with real footage.
+  - **Engine resolution instead of a blind default.** An explicit
+    `--pipeline` always wins; a `--style` selects its own engine (every
+    style now declares one); a look file declares its engine (schema 2);
+    classic-only options (`--bw`, `--leak`, `--flare`, `--age`, `--look`,
+    `--saturation`, a legacy `--print-stock`, …) auto-select the classic
+    engine **with a printed note, never silently**; otherwise:
+    photochemical. HDR sources auto-fall to the classic tonemap path with a
+    note (the film chain doesn't take HDR yet) unless the film engine was
+    explicitly forced, which stays a clear error.
+  - **The panel drives both engines.** A new Engine selector defaults to
+    film (photochemical): negative stock, print profile, printer lights
+    (R,G,B), and the opt-in lens vignette are panel controls now; classic-
+    only controls hide in film mode and return in classic mode. Previews,
+    full renders, and folder batches all run through the selected engine,
+    and a bad film setting reports in the panel instead of killing the
+    server.
+  - **Film styles lead the gallery**: `film` (the chain at its defaults),
+    `film-16mm` (smaller gauge, more grain), `film-scope` (2.39:1 with a
+    touch of lens softness, 10-bit). Classic styles remain and still work —
+    clicking one simply selects the classic engine, and `--style nineties`
+    et al. keep working from the CLI with an auto-route note.
+  - **Saved looks are schema 2**: a look file now records which engine it
+    belongs to and round-trips it. Schema-1 files (no version field) load
+    exactly as before — classic — even if a stray `pipeline` key appears
+    in one. `--save-look` works in photochemical mode now.
+  - Conflicts are errors, not surprises: `--style noir --pipeline
+    photochemical` refuses plainly rather than half-applying a classic
+    recipe to the film chain.
+- Panel defaults follow the film chain's own defaults (grain 7,
+  halation 0.33).
+
+## [0.43.0] — 2026-07-11
+
+### Changed
+- **The panel is monochrome — black, white, and grays only.** Grading-suite
+  discipline: any hue in the chrome biases the eye's read of the footage,
+  and the footage is the whole point. The orange accents and the
+  green/red status colors are gone; selection reads through a white border
+  and weight instead of color. The render report follows the same rule.
+
+### Fixed
+- **Dropping a video onto the panel now actually loads it.** A browser
+  never reveals a dropped file's disk path (security), so previously a drop
+  just bounced to the file picker — which read as broken. Now the page
+  streams the dropped file's bytes to the local server, which writes a
+  working copy and loads that, with live copy progress. (The copy is the
+  unavoidable cost of the browser sandbox; clicking to browse still loads
+  the original in place with no copy.) An empty drop still falls back to
+  the picker.
+- **Changing parameters mid-export no longer disturbs the export.** Every
+  slider move fires a live-preview render; during an export that meant a
+  second ffmpeg fighting the running one for the CPU/GPU encoder. Previews
+  now pause while a render or batch is in flight (the panel says so, and
+  notes that your changes don't affect the running export) and refresh the
+  moment it finishes. The server also refuses preview requests during an
+  export, so a stale page can't disturb one either.
+
+### Verified
+- Preset tiles were already stateless — clicking a style applies its full
+  defaults (aspect ratio included), your tweaks never modify the preset,
+  and re-clicking the tile restores everything. Now pinned by browser
+  tests so it stays that way: 19 Playwright checks green, including drop
+  upload, the export guard, preset restore, and a no-hue check on the
+  chrome.
+
 ## [0.42.3] — 2026-07-11
 
 ### Fixed

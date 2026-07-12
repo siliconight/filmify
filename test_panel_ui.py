@@ -90,7 +90,7 @@ def _run_checks():
         pg.mouse.click(5, 5)
         check("clicking away dismisses", not shown())
 
-        c = chip_near("Look")
+        c = chip_near("Gauge")   # visible in BOTH engines (Look is classic-only)
         if c:
             c.click()
             check("dropdown chip opens the popover", shown())
@@ -101,13 +101,19 @@ def _run_checks():
             c.click()
             check("checkbox chip opens the popover", shown())
 
-        # Import drop zone: a browser can't expose a dropped file's path, so a
-        # drop (and a click) must open the picker exactly once — not silently
-        # do nothing, not double-fire. (Regression: drop used to read f.path,
-        # always undefined, so it fell through confusingly.)
+        # Import drop zone: a browser can't expose a dropped file's PATH, so
+        # a dropped file is UPLOADED (bytes -> local server -> temp copy) —
+        # it must NOT bounce to the picker. Only an empty drop falls back.
         pg.evaluate("""() => {
           window.__loadCalls = [];
           window.loadPath = (path) => window.__loadCalls.push(path === '' ? 'PICKER' : path);
+          window.__xhr = [];
+          window.XMLHttpRequest = class {
+            constructor(){ this.upload = {}; }
+            open(m, u){ window.__xhr.push(u); }
+            setRequestHeader(){}
+            send(){}
+          };
         }""")
         pg.evaluate("""() => {
           const dz = document.getElementById('dropzone');
@@ -115,12 +121,92 @@ def _run_checks():
           dt.items.add(new File(['x'],'movie.mp4',{type:'video/mp4'}));
           dz.dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true}));
         }""")
-        check("dropping a file opens the picker once",
+        check("dropping a file uploads it (no picker bounce)",
+              pg.evaluate("() => window.__xhr.slice()") == ["/upload"]
+              and pg.evaluate("() => window.__loadCalls.slice()") == [])
+        pg.evaluate("""() => {
+          const dz = document.getElementById('dropzone');
+          dz.dispatchEvent(new DragEvent('drop',{dataTransfer:new DataTransfer(),bubbles:true}));
+        }""")
+        check("an empty drop falls back to the picker",
               pg.evaluate("() => window.__loadCalls.slice()") == ["PICKER"])
         pg.evaluate("() => window.__loadCalls = []")
         pg.eval_on_selector("#chooseBtn", "el => el.click()")
         check("Choose button opens the picker once (no double-fire)",
               pg.evaluate("() => window.__loadCalls.slice()") == ["PICKER"])
+
+        # Stateless preset tiles: click = the style's full defaults; user
+        # tweaks (ratio, grain, ...) never mutate the preset; re-click
+        # restores everything.
+        styled = pg.evaluate(
+            "() => Object.keys(styles).find(n => styles[n].ratio) || ''")
+        check("a ratio-bearing style exists for the test", bool(styled))
+        if styled:
+            want = pg.evaluate(f"() => String(styles['{styled}'].ratio)")
+            pg.evaluate(f"() => applyStyle('{styled}')")
+            check("style click applies its ratio",
+                  pg.eval_on_selector("#ratio", "el => el.value") == want)
+            pg.eval_on_selector(
+                "#ratio", "el => { el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); }")
+            pg.eval_on_selector(
+                "#grain", "el => { el.value='19'; el.dispatchEvent(new Event('input',{bubbles:true})); }")
+            check("manual tweak deselects the tile",
+                  pg.evaluate("() => document.querySelectorAll('.scard.sel').length") == 0)
+            pg.evaluate(f"() => applyStyle('{styled}')")
+            check("re-clicking the tile restores its ratio",
+                  pg.eval_on_selector("#ratio", "el => el.value") == want)
+            check("re-clicking the tile restores every default (grain)",
+                  pg.eval_on_selector("#grain", "el => el.value")
+                  == pg.evaluate(
+                      f"() => String((styles['{styled}'].grain ?? DEFAULTS.grain))"))
+
+        # Mid-export guard: while RENDERING, slider changes defer the preview
+        # instead of spawning an ffmpeg that fights the export.
+        pg.evaluate("() => { RENDERING = true; pendingRefresh = false; }")
+        pg.eval_on_selector(
+            "#grain", "el => { el.value='5'; el.dispatchEvent(new Event('input',{bubbles:true})); }")
+        check("param change during export defers the preview",
+              pg.evaluate("() => pendingRefresh === true"))
+        check("export-pause message shown",
+              "paused" in (pg.eval_on_selector("#status", "el => el.textContent") or ""))
+        pg.evaluate("() => { RENDERING = false; pendingRefresh = false; }")
+
+        # Engine: film (photochemical) is the default; classic-only
+        # controls hide in film mode and return in classic mode; film
+        # styles carry their engine into the tile click.
+        check("engine select defaults to film",
+              pg.eval_on_selector("#pipeline", "el => el.value") == "photochemical")
+        check("film-only controls visible by default",
+              pg.eval_on_selector("#filmgrp", "el => el.style.display") != "none")
+        check("classic-only slider hidden in film mode",
+              pg.eval_on_selector("#leak", "el => el.style.display") == "none")
+        check("classic-only checkbox hidden in film mode",
+              pg.eval_on_selector("#bw", "el => el.parentElement.style.display") == "none")
+        pg.eval_on_selector("#pipeline",
+            "el => { el.value='legacy'; el.dispatchEvent(new Event('change',{bubbles:true})); }")
+        check("classic engine restores classic controls",
+              pg.eval_on_selector("#leak", "el => el.style.display") != "none")
+        check("film group hides in classic mode",
+              pg.eval_on_selector("#filmgrp", "el => el.style.display") == "none")
+        pg.evaluate("() => applyStyle('film')")
+        check("film tile sets the film engine",
+              pg.eval_on_selector("#pipeline", "el => el.value") == "photochemical"
+              and pg.eval_on_selector("#leak", "el => el.style.display") == "none")
+        pg.evaluate("() => applyStyle('noir')")
+        check("classic tile sets the classic engine",
+              pg.eval_on_selector("#pipeline", "el => el.value") == "legacy")
+        check("settings() carries the engine",
+              pg.evaluate("() => settings().pipeline") == "legacy")
+        pg.evaluate("() => applyStyle('film')")
+
+        # Monochrome chrome: the accent must carry no hue (r == g == b) so
+        # the UI never biases the eye's read of the footage.
+        r_, g_, b_ = pg.evaluate("""() => {
+          const c = getComputedStyle(document.querySelector('#renderBtn') ||
+                                     document.querySelector('button')).backgroundColor;
+          return c.match(/\\d+/g).slice(0,3).map(Number);
+        }""")
+        check("UI accent is neutral gray (no hue)", r_ == g_ == b_)
 
         browser.close()
 

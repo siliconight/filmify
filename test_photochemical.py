@@ -191,20 +191,35 @@ def test_pipeline_flag_contract():
         capture_output=True, text=True, timeout=60)
     assert r.returncode != 0
     assert "not found" in (r.stdout + r.stderr)
-    # unknown negative stock fails with the available list
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "filmify.py"),
-         "_no_such_clip_.mp4", "--pipeline", "photochemical",
-         "--negative-stock", "kodak_5219"],
-        capture_output=True, text=True, timeout=60)
-    assert r.returncode != 0 and "modern_500t" in (r.stdout + r.stderr)
-    # a photochemical print profile without the pipeline flag gets a hint
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "filmify.py"),
-         "_no_such_clip_.mp4", "--print-stock", "neutral_release"],
-        capture_output=True, text=True, timeout=60)
-    assert r.returncode != 0
-    assert "--pipeline photochemical" in (r.stdout + r.stderr)
+    # unknown negative stock fails with the available list (validation runs
+    # after style/look application — a look file may set the stock — so it
+    # needs a real input to get that far)
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        clip = Path(td) / "c.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+             "testsrc2=s=160x90:r=24:d=0.2",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             str(clip)], check=True, timeout=120)
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "filmify.py"), str(clip),
+             "--dry-run", "--negative-stock", "kodak_5219"],
+            capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0 and "modern_500t" in (r.stdout + r.stderr)
+        # a photochemical print profile is simply the default engine's —
+        # no pipeline flag needed anymore
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "filmify.py"), str(clip),
+             "--dry-run", "--print-stock", "neutral_release"],
+            capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0 and "photochemical" in (r.stdout + r.stderr)
+        # a legacy print stock auto-routes to the classic engine with a note
+        r = subprocess.run(
+            [sys.executable, str(ROOT / "filmify.py"), str(clip),
+             "--dry-run", "--print-stock", "warm"],
+            capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0 and "classic" in (r.stdout + r.stderr)
     # legacy: flag accepted, failure (if any) is about the missing file
     r = subprocess.run(
         [sys.executable, str(ROOT / "filmify.py"),
@@ -704,14 +719,70 @@ def test_rotated_video_renders():
             f"legacy lost the rotation: {dims(leg_out)}"
 
 
-def test_schema_v1_looks_stay_legacy():
-    """TDD 15.1: schema-version-1 look files must keep selecting the legacy
-    pipeline. Enforced structurally: 'pipeline' must not join LOOK_KEYS until
-    the schema-v2 work lands with explicit versioning."""
+def test_look_schema_and_pipeline_resolution():
+    """Schema v2 (TDD 15.1 grown up): the photochemical engine is the
+    DEFAULT; classic recipes auto-route with a note; look files declare
+    their engine — and schema-1 files (no version field) stay classic even
+    if a stray 'pipeline' key appears in one."""
     spec = importlib.util.spec_from_file_location("filmify", ROOT / "filmify.py")
     fm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fm)
+    # structurally: the generic LOOK_KEYS loop must never apply pipeline
+    # (only the explicit schema-2 read may) — that's what keeps v1 classic
     assert "pipeline" not in fm.LOOK_KEYS
+    # every style declares its engine; film styles lead the gallery
+    assert all("pipeline" in d for d in fm.STYLES.values())
+    assert next(iter(fm.STYLES)) == "film"
+    assert fm.STYLES["film"]["pipeline"] == "photochemical"
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        clip = td / "c.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+             "testsrc2=s=160x90:r=24:d=0.3",
+             "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+             str(clip)], check=True, timeout=120)
+
+        def dry(*extra):
+            r = subprocess.run(
+                [sys.executable, str(ROOT / "filmify.py"), str(clip),
+                 "--dry-run", "--no-report", *extra],
+                capture_output=True, text=True, timeout=120)
+            return r.returncode, r.stdout + r.stderr
+
+        rc, out = dry()
+        assert rc == 0 and "photochemical" in out, \
+            "bare invocation is not photochemical-default"
+        rc, out = dry("--bw")
+        assert rc == 0 and "classic" in out and "photochemical:" not in out, \
+            "classic-only flag did not auto-route with a note"
+        rc, out = dry("--style", "film-16mm")
+        assert rc == 0 and "photochemical" in out and "16mm" in out
+        rc, out = dry("--style", "noir")
+        assert rc == 0 and "classic" in out
+        rc, out = dry("--style", "noir", "--pipeline", "photochemical")
+        assert rc != 0 and "classic-engine recipe" in out, \
+            "conflicting style+pipeline did not error"
+
+        # schema-2 look round-trips its engine; a sneaky pipeline key in a
+        # schema-1 file is ignored
+        lk = td / "film.json"
+        rc, out = dry("--save-look", str(lk))
+        assert rc == 0 and lk.exists()
+        import json as _j
+        data = _j.loads(lk.read_text())
+        assert data.get("schema") == 2 and data.get("pipeline") == "photochemical"
+        rc, out = dry("--look-file", str(lk))
+        assert rc == 0 and "photochemical" in out, "schema-2 engine not honored"
+        v1 = td / "v1.json"
+        d1 = {k: v for k, v in data.items() if k not in ("schema",)}
+        d1["pipeline"] = "photochemical"   # sneaky key, no schema field
+        v1.write_text(_j.dumps(d1))
+        rc, out = dry("--look-file", str(v1))
+        assert rc == 0 and "photochemical:" not in out, \
+            "schema-1 look file escaped the classic engine"
 
 
 def main():

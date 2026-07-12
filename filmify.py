@@ -58,7 +58,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.42.3"
+__version__ = "0.44.0"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -77,37 +77,62 @@ except ImportError:
 # Named recipes: one word that expands to a flag set. Everything remains
 # individually overridable — explicit CLI flags and look files win.
 STYLES = {
-    "documentary": {"look": "heavy", "gauge": "16mm"},
-    "noir":        {"look": "heavy", "bw": True},
-    "anamorphic":  {"look": "standard", "ratio": 2.39, "flare": 0.35, "depth": 10},
-    "home-movie":  {"look": "heavy", "leak": 0.3, "weave": 2.0,
-                    "flicker": 0.3, "corner_soften": 0.7},
-    "epic":        {"look": "subtle", "gauge": "70mm", "ratio": 2.2,
-                    "depth": 10, "codec": "prores"},
-    "blockbuster": {"look": "standard", "print_stock": "neutral",
-                    "ratio": 2.39, "depth": 10},
-    "western":     {"look": "heavy", "print_stock": "warm", "ratio": 2.39},
-    "horror":      {"look": "heavy", "print_stock": "cool",
-                    "saturation": 0.78},
-    "wedding":     {"look": "subtle", "print_stock": "warm", "soften": 0.7},
-    "super8":      {"look": "heavy", "gauge": "16mm", "grain": 16,
-                    "weave": 2.5, "leak": 0.4, "ratio": 1.33,
+    # ---- FILM engine (photochemical): the main path. A style here is the
+    # actual film chain — virtual negative, printer lights, print stock —
+    # with real silver-halide grain and linear-light halation.
+    "film":        {"pipeline": "photochemical"},
+    "film-16mm":   {"pipeline": "photochemical", "gauge": "16mm",
+                    "grain": 10},
+    "film-scope":  {"pipeline": "photochemical", "ratio": 2.39,
+                    "soften": 0.3, "depth": 10},
+    # ---- CLASSIC engine: recipes built on classic-only character
+    # (B&W, leak, flare, aged print, custom tone curves).
+    "documentary": {"pipeline": "legacy", "look": "heavy", "gauge": "16mm"},
+    "noir":        {"pipeline": "legacy", "look": "heavy", "bw": True},
+    "anamorphic":  {"pipeline": "legacy", "look": "standard", "ratio": 2.39,
+                    "flare": 0.35, "depth": 10},
+    "home-movie":  {"pipeline": "legacy", "look": "heavy", "leak": 0.3,
+                    "weave": 2.0, "flicker": 0.3, "corner_soften": 0.7},
+    "epic":        {"pipeline": "legacy", "look": "subtle", "gauge": "70mm",
+                    "ratio": 2.2, "depth": 10, "codec": "prores"},
+    "blockbuster": {"pipeline": "legacy", "look": "standard",
+                    "print_stock": "neutral", "ratio": 2.39, "depth": 10},
+    "western":     {"pipeline": "legacy", "look": "heavy",
+                    "print_stock": "warm", "ratio": 2.39},
+    "horror":      {"pipeline": "legacy", "look": "heavy",
+                    "print_stock": "cool", "saturation": 0.78},
+    "wedding":     {"pipeline": "legacy", "look": "subtle",
+                    "print_stock": "warm", "soften": 0.7},
+    "super8":      {"pipeline": "legacy", "look": "heavy", "gauge": "16mm",
+                    "grain": 16, "weave": 2.5, "leak": 0.4, "ratio": 1.33,
                     "flicker": 0.5, "age": 0.45, "corner_soften": 1.0},
-    "newsreel":    {"look": "heavy", "bw": True, "gauge": "16mm",
-                    "weave": 1.5, "ratio": 1.33,
+    "newsreel":    {"pipeline": "legacy", "look": "heavy", "bw": True,
+                    "gauge": "16mm", "weave": 1.5, "ratio": 1.33,
                     "flicker": 0.5, "age": 0.55},
     # 1990s theatrical-drama aesthetic (Spielberg/Kaminski-inspired). The tone
     # package lives in the "nineties" base LOOK (custom curve + warmth, which
     # styles can't carry); this style is the gallery front door for it, plus a
     # subtle gate weave for 90s mechanical-35mm life.
-    "nineties":    {"look": "nineties", "weave": 1.0},
+    "nineties":    {"pipeline": "legacy", "look": "nineties", "weave": 1.0},
 }
 
 
 def apply_style(args, ap) -> None:
     """Expand a named style. Only fills settings still at their parser
-    defaults, so explicit flags and look-file values keep precedence."""
-    for k, v in STYLES[args.style].items():
+    defaults, so explicit flags and look-file values keep precedence.
+    The style's engine was already resolved by _resolve_pipeline; an
+    explicit --pipeline that contradicts the style is an error, not a
+    silent half-application."""
+    sdef = STYLES[args.style]
+    want = sdef.get("pipeline", "legacy")
+    if getattr(args, "_pipeline_explicit", False) and args.pipeline != want:
+        sys.exit(f"error: style {args.style!r} is a "
+                 f"{'film' if want == 'photochemical' else 'classic'}-engine "
+                 f"recipe — drop --pipeline {args.pipeline}, or pick a "
+                 "matching style")
+    for k, v in sdef.items():
+        if k == "pipeline":
+            continue
         if getattr(args, k) == ap.get_default(k):
             setattr(args, k, v)
 
@@ -605,6 +630,13 @@ def apply_look_file(args, ap) -> None:
     except json.JSONDecodeError as e:
         sys.exit(f"error: {lf} is not valid JSON: {e}")
     base = lf.resolve().parent
+    # Schema 2: the look file declares its engine. Schema-1 files (no
+    # "schema" field) are classic looks by definition — a stray "pipeline"
+    # key in one is ignored. An explicit --pipeline still wins.
+    if (data.get("schema") == 2
+            and not getattr(args, "_pipeline_explicit", False)
+            and data.get("pipeline") in ("legacy", "photochemical")):
+        args.pipeline = data["pipeline"]
     for k in LOOK_KEYS:
         if k in data and getattr(args, k) == ap.get_default(k):
             v = data[k]
@@ -616,8 +648,11 @@ def apply_look_file(args, ap) -> None:
 
 
 def save_look_file(args) -> None:
-    """Write the effective settings to a JSON look file."""
-    data = {"filmify_version": __version__}
+    """Write the effective settings to a JSON look file (schema 2: the file
+    declares which engine it belongs to; schema-1 files, which predate the
+    field, always load as classic)."""
+    data = {"filmify_version": __version__, "schema": 2,
+            "pipeline": getattr(args, "pipeline", None) or "legacy"}
     for k in LOOK_KEYS:
         v = getattr(args, k)
         data[k] = str(v) if isinstance(v, Path) else v
@@ -676,48 +711,91 @@ def source_normalize(info: dict, args) -> str:
     return "zscale=rin=full:r=tv"  # range only, nothing else touched
 
 
-def _validate_photochemical_flags(args, ap) -> tuple:
-    """Filesystem-free validation of photochemical-mode flags — runs right
-    after argument parsing, BEFORE the input-file checks, so a typo'd stock
-    name or an unsupported flag combination reports as what it is rather
-    than hiding behind a missing-file error. Returns (print_profile_id,
-    printer_lights, input_transfer) for _setup_photochemical to build on."""
+def _resolve_pipeline(args, ap) -> None:
+    """Decide which engine runs. The photochemical film chain is filmify's
+    main path and the DEFAULT; the classic chain is auto-selected — with a
+    printed note, never silently — when the invocation is a classic recipe:
+      1. an explicit --pipeline always wins;
+      2. a --style knows its own engine (each style carries a pipeline);
+      3. a --look-file defaults classic (schema-1 files ARE classic looks;
+         a schema-2 file re-declares its engine when applied);
+      4. classic-only knobs (B&W, leak, flare, aged print, look intensity,
+         saturation discipline, ...) select the classic engine that owns
+         them;
+      5. otherwise: photochemical."""
+    args._pipeline_explicit = args.pipeline is not None
+    if args._pipeline_explicit:
+        return
+    if args.style:
+        sdef = STYLES.get(args.style, {})
+        args.pipeline = sdef.get("pipeline", "legacy")
+        if args.pipeline == "legacy":
+            print(f"note  : style '{args.style}' is a classic-engine recipe "
+                  "— using the classic pipeline")
+        return
+    if args.look_file:
+        args.pipeline = "legacy"
+        return
+    dflt = ap.get_default
+    classic = [name for name, attr in (
+        ("--look", "look"), ("--saturation", "saturation"),
+        ("--chroma-soften", "chroma_soften"), ("--presence", "presence"),
+        ("--bw", "bw"), ("--leak", "leak"), ("--flare", "flare"),
+        ("--age", "age"), ("--corner-soften", "corner_soften"),
+        ("--no-curve", "no_curve"),
+        ("--no-protect-skin", "no_protect_skin"),
+        ("--grain-plate", "grain_plate"),
+        ("--plate-opacity", "plate_opacity"), ("--compare", "compare"),
+    ) if getattr(args, attr, None) != dflt(attr)]
+    if args.print_stock in PRINT_STOCKS:
+        classic.append("--print-stock " + str(args.print_stock))
+    if classic:
+        args.pipeline = "legacy"
+        print(f"note  : {', '.join(classic)} live in the classic engine — "
+              "using the classic pipeline (drop them, or pass --pipeline "
+              "photochemical)")
+        return
+    args.pipeline = "photochemical"
+
+
+def _check_photochemical_flags(args) -> tuple:
+    """Validate photochemical-mode flags, raising RuntimeError on problems —
+    callable from the panel without killing the server. Returns
+    (print_profile_id, printer_lights, input_transfer)."""
     if _pc_mod is None or _lut_mod is None:
-        sys.exit("error: photochemical.py and lut_generation.py must sit "
-                 "next to filmify.py for --pipeline photochemical")
-    if args.style or args.look_file:
-        sys.exit("error: --style and --look-file are legacy-pipeline recipes; "
-                 "photochemical looks arrive with the versioned look schema")
-    if args.save_look:
-        sys.exit("error: --save-look writes legacy (schema 1) look files, "
-                 "which always select the legacy pipeline; the photochemical "
-                 "look schema arrives with saved-look v2")
+        raise RuntimeError(
+            "photochemical.py and lut_generation.py must sit next to "
+            "filmify.py for the photochemical pipeline")
+    if args.style and STYLES.get(args.style, {}).get(
+            "pipeline", "legacy") != "photochemical":
+        raise RuntimeError(
+            f"style {args.style!r} is a classic-engine recipe — drop "
+            "--pipeline photochemical, or pick a film style")
     if args.compare:
-        sys.exit("error: --compare isn't wired into the photochemical chain "
-                 "yet — render both pipelines and A/B them for now")
-    if args.ui:
-        sys.exit("error: the control panel drives the legacy pipeline for "
-                 "now; photochemical panel controls arrive with the UI pass")
+        raise RuntimeError(
+            "--compare isn't wired into the photochemical chain yet — "
+            "render both pipelines and A/B them for now")
 
     negatives = sorted(p for p, d in _pc_mod.BUILTIN_PROFILES.items()
                        if d["profile_type"] == "negative")
     prints = sorted(p for p, d in _pc_mod.BUILTIN_PROFILES.items()
                     if d["profile_type"] == "print")
     if args.negative_stock not in negatives:
-        sys.exit(f"error: unknown negative stock {args.negative_stock!r} "
-                 f"(have: {', '.join(negatives)})")
+        raise RuntimeError(f"unknown negative stock {args.negative_stock!r} "
+                           f"(have: {', '.join(negatives)})")
     prt_id = args.print_stock or prints[0]
     if prt_id in PRINT_STOCKS:
-        sys.exit(f"error: {prt_id!r} is a legacy print stock; photochemical "
-                 f"print profiles: {', '.join(prints)}")
+        raise RuntimeError(
+            f"{prt_id!r} is a classic print stock; photochemical "
+            f"print profiles: {', '.join(prints)}")
 
     try:
         lights = tuple(int(x) for x in str(args.printer_lights).split(","))
         if len(lights) != 3:
             raise ValueError
     except ValueError:
-        sys.exit("error: --printer-lights wants three integers R,G,B "
-                 "(e.g. 25,25,25)")
+        raise RuntimeError("--printer-lights wants three integers R,G,B "
+                           "(e.g. 25,25,25)")
 
     # Camera log develops INSIDE the negative LUT — straight to scene-linear
     # exposure, never through a display image first. That is the point.
@@ -725,12 +803,21 @@ def _validate_photochemical_flags(args, ap) -> tuple:
     if args.input_log:
         name = str(args.input_log).lower()
         if name not in LOG_PRESETS:
-            sys.exit("error: photochemical mode develops log itself "
-                     f"(presets: {', '.join(LOG_PRESETS)}); manufacturer "
-                     ".cube input LUTs return with the input-LUT stage")
+            raise RuntimeError(
+                "photochemical mode develops log itself "
+                f"(presets: {', '.join(LOG_PRESETS)}); manufacturer "
+                ".cube input LUTs return with the input-LUT stage")
         transfer = name
         args.input_log = None    # keep the legacy log-develop stage off
     return prt_id, lights, transfer
+
+
+def _validate_photochemical_flags(args, ap) -> tuple:
+    """CLI wrapper: same checks, but a problem exits with a clean error."""
+    try:
+        return _check_photochemical_flags(args)
+    except RuntimeError as exc:
+        sys.exit(f"error: {exc}")
 
 
 def _setup_photochemical(args, ap) -> None:
@@ -752,7 +839,8 @@ def _setup_photochemical(args, ap) -> None:
                    "age", "bw", "no_curve",
                    "no_protect_skin", "match")
     ignored = [k for k in legacy_only
-               if getattr(args, k, None) != ap.get_default(k)]
+               if ap is not None
+               and getattr(args, k, None) != ap.get_default(k)]
     if ignored:
         print("note  : legacy-only for now, ignored by the photochemical "
               "pipeline: " + ", ".join(sorted(ignored)))
@@ -1779,13 +1867,19 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
     graph = None
     if getattr(args, "pipeline", "legacy") == "photochemical":
         if info.get("hdr"):
-            res["error"] = ("HDR sources aren't supported by the "
-                            "photochemical pipeline yet (linear HDR mapping "
-                            "into the negative arrives with the color-"
-                            "management stage) — use --pipeline legacy")
-            print(f"input : {src}\nFAILED: {res['error']}\n")
-            return res
-        graph = build_photochemical_graph(args, info)
+            if getattr(args, "_pipeline_explicit", False):
+                res["error"] = ("HDR sources aren't supported by the "
+                                "photochemical pipeline yet (linear HDR "
+                                "mapping into the negative arrives with the "
+                                "color-management stage) — use "
+                                "--pipeline legacy")
+                print(f"input : {src}\nFAILED: {res['error']}\n")
+                return res
+            print("note  : HDR source — the film engine doesn't take HDR "
+                  "yet, using the classic engine (tonemap) for this clip")
+            graph = build_filtergraph(args, info)
+        else:
+            graph = build_photochemical_graph(args, info)
     else:
         graph = build_filtergraph(args, info)
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-stats",
@@ -1961,18 +2055,18 @@ def write_report(results: list, args, dest: Path) -> None:
         )
     doc = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>filmify report</title><style>
-body{{background:#141210;color:#e8e2d8;font:15px/1.5 system-ui,sans-serif;padding:2rem;max-width:1060px;margin:0 auto}}
+body{{background:#121212;color:#e8e8e8;font:15px/1.5 system-ui,sans-serif;padding:2rem;max-width:1060px;margin:0 auto}}
 h1{{font-weight:600;font-size:1.4rem;margin:0}}
-.meta{{color:#a89f90;margin:.3rem 0 2rem}}
-.card{{background:#1d1a17;border:1px solid #2c2722;border-radius:10px;padding:1rem 1.2rem;margin-bottom:1.2rem}}
+.meta{{color:#9c9c9c;margin:.3rem 0 2rem}}
+.card{{background:#1a1a1a;border:1px solid #2b2b2b;border-radius:10px;padding:1rem 1.2rem;margin-bottom:1.2rem}}
 .card header{{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}}
 .card h2{{font-size:1.05rem;font-weight:600;margin:0;word-break:break-all}}
-.ok{{color:#8fc97c;white-space:nowrap}}.bad{{color:#e07a6a;white-space:nowrap}}
+.ok{{color:#d6d6d6;white-space:nowrap}}.bad{{color:#ffffff;font-weight:600;white-space:nowrap}}
 .pair{{display:flex;gap:10px;margin:.8rem 0 .2rem;flex-wrap:wrap}}
 figure{{margin:0;flex:1;min-width:260px}}
 img{{width:100%;border-radius:6px;display:block}}
-figcaption{{color:#a89f90;font-size:.8rem;margin-top:.25rem;text-transform:uppercase;letter-spacing:.06em}}
-p{{color:#cfc7ba;margin:.5rem 0 0}}#helppop{{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}}
+figcaption{{color:#9c9c9c;font-size:.8rem;margin-top:.25rem;text-transform:uppercase;letter-spacing:.06em}}
+p{{color:#c9c9c9;margin:.5rem 0 0}}#helppop{{display:none;position:absolute;width:300px;background:#1e1e1e;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}}
 .hq{{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}}.hq:hover{{border-color:var(--acc);color:var(--acc)}}
 </style></head><body>
 <div id="helppop"></div>
@@ -1984,7 +2078,7 @@ p{{color:#cfc7ba;margin:.5rem 0 0}}#helppop{{display:none;position:absolute;widt
 
 UI_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>filmify panel</title><link rel="icon" href="data:image/png;base64,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"><style>
-:root{--bg:#141210;--panel:#1d1a17;--line:#2c2722;--tx:#e8e2d8;--dim:#a89f90;--acc:#d98a4a}
+:root{--bg:#121212;--panel:#1a1a1a;--line:#2b2b2b;--tx:#e8e8e8;--dim:#9c9c9c;--acc:#dcdcdc}
 body{background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,sans-serif;margin:0;display:flex;min-height:100vh}
 #side{width:300px;min-width:300px;background:var(--panel);border-right:1px solid var(--line);padding:16px;overflow-y:auto}
 #main{flex:1;display:flex;flex-direction:column;align-items:center;padding:18px;gap:10px}
@@ -1996,7 +2090,7 @@ input[type=range]{width:100%;accent-color:var(--acc)}
 select,input[type=text]{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:inherit}
 .checks{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:10px 0}
 .checks label{display:flex;justify-content:flex-start;gap:6px;text-transform:none;margin:0}
-button{background:var(--acc);color:#1a120a;border:0;border-radius:7px;padding:9px 12px;font:inherit;font-weight:600;cursor:pointer;width:100%;margin-top:8px}
+button{background:var(--acc);color:#141414;border:0;border-radius:7px;padding:9px 12px;font:inherit;font-weight:600;cursor:pointer;width:100%;margin-top:8px}
 button.sec{background:var(--line);color:var(--tx)}
 #prev{max-width:100%;max-height:72vh;border-radius:8px;background:#000;min-height:200px}
 #scrubrow{width:100%;max-width:960px;display:flex;gap:10px;align-items:center;color:var(--dim);font-size:12px}
@@ -2005,21 +2099,21 @@ button.sec{background:var(--line);color:var(--tx)}
 hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 #cards{display:flex;gap:8px;overflow-x:auto;width:100%;max-width:960px;padding-bottom:4px}
 .scard{flex:0 0 150px;cursor:pointer;border:2px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
-.scard.sel{border-color:var(--acc)}
+.scard.sel{border-color:#ffffff}
 .scard img{width:100%;height:84px;object-fit:cover;display:block;background:#000}
 .scard div{font-size:11px;text-align:center;padding:3px 2px;color:var(--dim);text-transform:capitalize}
-.scard.sel div{color:var(--acc)}
-#guide{background:#241f19;border:1px solid #3a3128;color:#cdbfa8;border-radius:8px;padding:7px 12px;font-size:12.5px;max-width:960px;width:100%;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.scard.sel div{color:#ffffff;font-weight:600}
+#guide{background:#1e1e1e;border:1px solid #353535;color:#cccccc;border-radius:8px;padding:7px 12px;font-size:12.5px;max-width:960px;width:100%;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;gap:8px}
 #import{width:100%;max-width:960px}
 #dropzone{border:2px dashed var(--line);border-radius:12px;padding:60px 20px;text-align:center;color:var(--dim);background:var(--panel);transition:border-color .15s,background .15s}
-#dropzone.drag{border-color:var(--acc);background:#241c14}
+#dropzone.drag{border-color:var(--acc);background:#222222}
 #progwrap{width:100%;height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:8px}
 #progfill{height:100%;width:0%;background:var(--acc);transition:width .3s ease}
 #batchwrap{width:100%;height:8px;background:var(--line);border-radius:5px;overflow:hidden;margin-top:6px}
-#batchfill{height:100%;width:0%;background:#6db86d;transition:width .3s ease}
-#gx{cursor:pointer;color:#a89f90;padding:0 4px}
-#rendered{background:#1d2a1a;border:1px solid #36502f;color:#9fd18b;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
-#helppop{display:none;position:absolute;width:300px;background:#262019;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+#batchfill{height:100%;width:0%;background:#dcdcdc;transition:width .3s ease}
+#gx{cursor:pointer;color:#9c9c9c;padding:0 4px}
+#rendered{background:#1e1e1e;border:1px solid #3a3a3a;color:#e0e0e0;border-radius:8px;padding:8px 14px;font-size:13px;max-width:960px;width:100%;box-sizing:border-box}
+#helppop{display:none;position:absolute;width:300px;background:#1e1e1e;border:1px solid var(--acc);color:var(--tx);font-size:12px;line-height:1.5;padding:10px 12px;border-radius:8px;z-index:50;box-shadow:0 6px 24px rgba(0,0,0,.5)}
 .hq{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border:1px solid var(--dim);border-radius:50%;color:var(--dim);font-size:10px;cursor:help;flex:none}.hq:hover{border-color:var(--acc);color:var(--acc)}
 details.adv{margin:8px 0 2px;border-top:1px solid var(--line);padding-top:6px}
 details.adv>summary{cursor:pointer;color:var(--acc);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:3px 0;user-select:none}
@@ -2029,6 +2123,20 @@ details.adv[open]>summary{margin-bottom:2px}
 <div id="side">
   <h1 style="display:flex;align-items:center;gap:8px"><img src="data:image/png;base64,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" width="22" height="22" style="border-radius:5px">filmify __VERSION__</h1>
   <div class="fn">__FILENAME__</div>
+
+  <label>Engine</label>
+  <select id="pipeline"><option value="photochemical" selected>film (photochemical)</option><option value="legacy">classic</option></select>
+
+  <div id="filmgrp">
+  <label>Negative stock</label>
+  <select id="negative_stock"><option selected>modern_500t</option></select>
+  <label>Print profile</label>
+  <select id="pc_print"><option value="" selected>neutral_release</option></select>
+  <label>Printer lights (R,G,B)</label>
+  <input type="text" id="printer_lights" value="25,25,25">
+  <label>Vignette <output id="pc_vignetteV"></output></label>
+  <input type="range" id="pc_vignette" min="0" max="1" step="0.05" value="0">
+  </div>
 
   <label>Look (intensity)</label>
   <select id="look"><option selected>clean</option><option>subtle</option><option>standard</option><option>heavy</option><option value="nineties" hidden>nineties</option></select>
@@ -2115,7 +2223,7 @@ details.adv[open]>summary{margin-bottom:2px}
   <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
     <label style="display:flex;gap:6px;text-transform:none;font-size:12px;margin-bottom:8px">
       <input type="checkbox" id="matchbox" checked> Match shots across clips (cohesive look)</label>
-    <button class="sec" id="batchBtn" style="background:var(--acc);color:#1a120a;font-weight:600">Process whole folder\u2026</button>
+    <button class="sec" id="batchBtn" style="background:var(--acc);color:#141414;font-weight:600">Process whole folder\u2026</button>
     <div style="font-size:11px;color:var(--dim);margin-top:4px">Apply this exact look to every video in a folder. Walk away &mdash; results land in a new timestamped folder.</div>
     <div id="batchstat" hidden style="margin-top:8px;font-size:12px;color:var(--tx)"></div>
     <div id="batchwrap" hidden><div id="batchfill"></div></div>
@@ -2228,10 +2336,30 @@ document.addEventListener("click", e => {
   });
 })();
 
-const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare","presence","flicker","corner_soften","age"];
+const sliders = ["grain","halation","soften","saturation","chroma_soften","weave","leak","flare","presence","flicker","corner_soften","age","pc_vignette"];
+const LEGACY_ONLY = ["look","saturation","chroma_soften","leak","flare","presence","corner_soften","age","print_stock","grain_plate","loadlook"];
+const LEGACY_CHECKS = ["bw","curve","vignette","compare"];
+function setEngine(p){
+  const film = p === "photochemical";
+  $("filmgrp").style.display = film ? "" : "none";
+  for (const id of LEGACY_ONLY){
+    const el = $(id); if (!el) continue;
+    el.style.display = film ? "none" : "";
+    const lab = el.previousElementSibling;
+    if (lab && lab.tagName === "LABEL") lab.style.display = film ? "none" : "";
+  }
+  for (const id of LEGACY_CHECKS){
+    const el = $(id);
+    if (el && el.parentElement) el.parentElement.style.display = film ? "none" : "";
+  }
+}
 const styles = __STYLES_JSON__;
 const looks = __LOOKS_JSON__;
 function setAll(d){
+  if (d.pipeline){ $("pipeline").value = d.pipeline; setEngine(d.pipeline); }
+  if (d.negative_stock !== undefined) $("negative_stock").value = d.negative_stock || "modern_500t";
+  if (d.pc_print !== undefined) $("pc_print").value = d.pc_print || "";
+  if (d.printer_lights !== undefined) $("printer_lights").value = d.printer_lights || "25,25,25";
   const map = {look:"look",gauge:"gauge",codec:"codec",input_log:"input_log",
                lut:"lut",grain_plate:"grain_plate",print_stock:"print_stock"};
   for (const [k,id] of Object.entries(map))
@@ -2245,6 +2373,11 @@ function setAll(d){
 }
 function settings(){
   return {
+    pipeline: $("pipeline").value,
+    negative_stock: $("negative_stock").value,
+    pc_print: $("pc_print").value,
+    printer_lights: $("printer_lights").value,
+    pc_vignette: $("pc_vignette").value,
     look: $("look").value, gauge: $("gauge").value, ratio: $("ratio").value,
     grain: $("grain").value, halation: $("halation").value, soften: $("soften").value,
     saturation: $("saturation").value, chroma_soften: $("chroma_soften").value,
@@ -2272,17 +2405,33 @@ function refresh(){
   img.onerror = () => { $("status").textContent = "preview failed — check paths"; busy = false; };
   img.src = "/preview?" + q + "&_=" + Date.now();
 }
-function schedule(){ clearTimeout(timer); timer = setTimeout(refresh, 180); }
+let RENDERING = false, pendingRefresh = false;
+function schedule(){
+  if (RENDERING) {
+    // an export is running — a live-preview ffmpeg would fight it for the
+    // CPU/GPU encoder. Defer; the preview refreshes when the export ends.
+    pendingRefresh = true;
+    $("status").textContent = "exporting\u2026 preview paused (your changes don\u2019t affect the running export)";
+    return;
+  }
+  clearTimeout(timer); timer = setTimeout(refresh, 180);
+}
 document.querySelectorAll("input,select").forEach(el => {
   el.addEventListener("input", schedule); el.addEventListener("change", schedule);
 });
-const DEFAULTS = {look:"clean",gauge:"35mm",ratio:"",grain:3,halation:0.16,
+const DEFAULTS = {pipeline:"photochemical",negative_stock:"modern_500t",
+  pc_print:"",printer_lights:"25,25,25",pc_vignette:0,
+  look:"clean",gauge:"35mm",ratio:"",grain:7,halation:0.33,
   soften:0.25,saturation:0.94,chroma_soften:0.5,weave:0,leak:0,flare:0,
   presence:0.18,flicker:0,corner_soften:0,age:0,
   bw:false,depth:8,codec:"h264",print_stock:"",lut:"",grain_plate:"",input_log:""};
 function styleSettings(name){
   const d = Object.assign({}, DEFAULTS, styles[name] || {});
-  return {look:d.look,gauge:d.gauge,ratio:d.ratio||"",grain:d.grain,
+  return {pipeline:d.pipeline||"legacy",
+    negative_stock:d.negative_stock||"modern_500t",
+    pc_print:d.pc_print||"",printer_lights:d.printer_lights||"25,25,25",
+    pc_vignette:d.pc_vignette||0,
+    look:d.look,gauge:d.gauge,ratio:d.ratio||"",grain:d.grain,
     halation:d.halation,soften:d.soften,saturation:d.saturation,
     chroma_soften:d.chroma_soften,weave:d.weave,leak:d.leak,flare:d.flare,
     presence:d.presence,flicker:d.flicker,corner_soften:d.corner_soften,
@@ -2347,6 +2496,7 @@ $("renderBtn").onclick = async () => {
   $("progwrap").hidden = false;
   $("progfill").style.width = "0%";
   $("status").textContent = "starting render…";
+  RENDERING = true;
   await post("/render", settings());
   const poll = setInterval(async () => {
     const s = await (await fetch("/status")).json();
@@ -2356,6 +2506,8 @@ $("renderBtn").onclick = async () => {
       $("status").textContent = "rendering full clip… " + p + "%";
     } else {
       clearInterval(poll);
+      RENDERING = false;
+      if (pendingRefresh) { pendingRefresh = false; schedule(); }
       $("renderBtn").disabled = false;
       if (s.error) {
         $("progwrap").hidden = true;
@@ -2410,11 +2562,31 @@ const dz = $("dropzone");
 ["dragenter","dragover"].forEach(ev => dz.addEventListener(ev, e => {e.preventDefault(); dz.classList.add("drag");}));
 ["dragleave","drop"].forEach(ev => dz.addEventListener(ev, e => {e.preventDefault(); dz.classList.remove("drag");}));
 dz.addEventListener("drop", e => {
-  // A browser never exposes a dropped file's real disk path (security), and
-  // the server needs a real path to process it — so a drop can't load the
-  // file directly. Instead we treat a drop as a shortcut to the picker,
-  // opened to a sensible place. Honest and always reliable.
-  loadPath("");
+  // A browser never exposes a dropped file's disk path (security), so we
+  // stream the file's BYTES to the local server, which writes a working
+  // copy and loads that. Big files take a moment — progress shows. If the
+  // drop somehow carries no file, fall back to the picker.
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f) { loadPath(""); return; }
+  const mb = (f.size / 1048576).toFixed(0);
+  $("importmsg").textContent = "copying " + f.name + " (" + mb + " MB) into filmify\u2026";
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/upload");
+  xhr.setRequestHeader("X-Filename", encodeURIComponent(f.name));
+  xhr.upload.onprogress = ev => {
+    if (ev.lengthComputable)
+      $("importmsg").textContent = "copying " + f.name + "\u2026 " +
+        Math.round(ev.loaded / ev.total * 100) + "%";
+  };
+  xhr.onload = () => {
+    try {
+      const r = JSON.parse(xhr.responseText);
+      if (r.ok) { $("importmsg").textContent = ""; showEditor(r.name); }
+      else $("importmsg").textContent = r.error || "couldn't load that file";
+    } catch(err) { $("importmsg").textContent = "load failed"; }
+  };
+  xhr.onerror = () => { $("importmsg").textContent = "upload failed \u2014 click to browse instead"; };
+  xhr.send(f);
 });
 dz.addEventListener("click", () => loadPath(""));
 
@@ -2434,6 +2606,7 @@ $("batchBtn").onclick = async () => {
   const r = await (await fetch("/batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})).json();
   if (!r.ok) { if(!r.cancel) $("batchstat").textContent = "couldn't start"; return; }
   $("batchstat").hidden = false; $("batchwrap").hidden = false;
+  RENDERING = true;
   $("batchBtn").disabled = true; $("renderBtn").disabled = true;
   const poll = setInterval(async () => {
     const s = await (await fetch("/status")).json();
@@ -2443,6 +2616,8 @@ $("batchBtn").onclick = async () => {
       $("batchstat").textContent = "clip " + (s.b_done+1) + " of " + s.b_total + " \u2014 " + (s.b_name||"") + " (" + (s.pct||0) + "%)";
     } else if (s.batch && !s.rendering) {
       clearInterval(poll);
+      RENDERING = false;
+      if (pendingRefresh) { pendingRefresh = false; schedule(); }
       $("batchfill").style.width = "100%";
       $("batchBtn").disabled = false; $("renderBtn").disabled = false;
       $("batchstat").innerHTML = "\u2713 " + (s.b_name||"done") + " \u2014 saved to a new folder &nbsp;<button id=\'brev\' style=\'width:auto;padding:3px 10px;font-size:11px\'>Show in folder</button>";
@@ -2452,6 +2627,8 @@ $("batchBtn").onclick = async () => {
   }, 800);
 };
 
+$("pipeline").addEventListener("change", () => setEngine($("pipeline").value));
+setEngine($("pipeline").value);
 if (HAS_CLIP_INIT) showEditor(); else showImport();
 setInterval(() => { fetch("/alive").catch(()=>{}); }, 8000);
 fetch("/alive").catch(()=>{});
@@ -2493,6 +2670,32 @@ def _ui_args(base, q):
     a.age = fl("age")
     a.no_protect_skin = str(q.get("no_protect_skin")) in ("true", "True", "1")
     a._match = None
+    # ---- engine + film-chain fields
+    a.pipeline = q.get("pipeline") or "photochemical"
+    a._pipeline_explicit = False   # let HDR sources auto-fall to classic
+    a.negative_stock = q.get("negative_stock") or "modern_500t"
+    a.printer_lights = q.get("printer_lights") or "25,25,25"
+    a.style = None
+    a.look_file = None
+    a.save_look = None
+    if a.pipeline == "photochemical":
+        a.print_stock = q.get("pc_print") or None
+        a.vignette = fl("pc_vignette")     # opt-in lens vignette, 0 = off
+        a.compare = False                  # not wired into the film chain
+        a.bw = False
+        a.grain_plate = None
+    else:
+        a.vignette = None                  # checkbox semantics (no_vignette)
+    return a
+
+
+def _ui_finish(a):
+    """Per-request engine setup for panel-built args: validate the film
+    flags and generate (or cache-hit) the LUTs. Raises RuntimeError with a
+    human message on problems — never kills the server."""
+    if getattr(a, "pipeline", "legacy") == "photochemical":
+        a._pc_flags = _check_photochemical_flags(a)
+        _setup_photochemical(a, None)
     return a
 
 
@@ -2658,6 +2861,7 @@ def run_ui(args) -> None:
             a.lut = None
         if a.grain_plate and not a.grain_plate.exists():
             a.grain_plate = None
+        _ui_finish(a)
         d = info["duration"] or 10.0
         t = max(0.0, min(d * 0.98, d * float(q.get("t", 40)) / 100.0))
         # Proxy: scale FIRST, then run every filter at proxy resolution —
@@ -2665,7 +2869,11 @@ def run_ui(args) -> None:
         pw = min(max(120, int(float(q.get("pw", 960)))), 1280, info["width"])
         ph = max(2, int(info["height"] * pw / info["width"] / 2) * 2)
         pinfo = dict(info, width=pw, height=ph)
-        graph = build_filtergraph(a, pinfo)
+        if getattr(a, "pipeline", "legacy") == "photochemical" \
+                and not pinfo.get("hdr"):
+            graph = build_photochemical_graph(a, pinfo)
+        else:
+            graph = build_filtergraph(a, pinfo)
         graph = graph.replace("[0:v]", f"[0:v]scale={pw}:{ph},", 1)
         cmd = [FFMPEG, "-v", "error", "-ss", f"{t:.2f}", "-i", str(cur["src"])]
         if a.grain_plate:
@@ -2690,6 +2898,11 @@ def run_ui(args) -> None:
         a.compare = False
         a.preview = None
         a.dry_run = False
+        try:
+            _ui_finish(a)
+        except RuntimeError as exc:
+            state.update(rendering=False, error=str(exc))
+            return
         ext2 = ".mp4" if a.codec == "h264" else ".mov"
         outdir = cur["outdir"] or s.parent
         # Output name: user-supplied (sanitized) or the default <name>_film.
@@ -2727,6 +2940,11 @@ def run_ui(args) -> None:
         a.compare = False
         a.preview = None
         a.dry_run = False
+        try:
+            _ui_finish(a)
+        except RuntimeError as exc:
+            state.update(rendering=False, error=str(exc))
+            return
         do_match = str(q.get("match")) in ("true", "True", "1")
         src_dir = Path(folder)
         files = sorted(f for f in src_dir.iterdir()
@@ -2796,6 +3014,12 @@ def run_ui(args) -> None:
             if self.path == "/":
                 self._send(200, "text/html; charset=utf-8", page.encode())
             elif self.path.startswith("/preview"):
+                if state["rendering"]:
+                    # a live-preview ffmpeg would fight the running export
+                    # for the CPU/GPU encoder; the page defers and refreshes
+                    # when the export ends
+                    self._send(423, "text/plain", b"export in progress")
+                    return
                 q = dict(urllib.parse.parse_qsl(
                     urllib.parse.urlsplit(self.path).query))
                 try:
@@ -2843,6 +3067,39 @@ def run_ui(args) -> None:
                 self._send(404, "text/plain", b"not found")
 
         def do_POST(self):
+            if self.path == "/upload":
+                # A dropped file: the browser can never reveal its real disk
+                # path (security), so the page streams us the BYTES and we
+                # write a working copy — that copy's path is what ffmpeg gets.
+                try:
+                    name = Path(urllib.parse.unquote(
+                        self.headers.get("X-Filename", "dropped.mp4"))).name
+                    n = int(self.headers.get("Content-Length", 0))
+                    if n <= 0:
+                        raise RuntimeError("empty upload")
+                    import tempfile
+                    imp = Path(tempfile.gettempdir()) / "filmify-imports"
+                    imp.mkdir(exist_ok=True)
+                    dest = imp / name
+                    left = n
+                    with open(dest, "wb") as f:
+                        while left > 0:
+                            chunk = self.rfile.read(min(1 << 20, left))
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            left -= len(chunk)
+                    if left > 0:
+                        raise RuntimeError("upload interrupted")
+                    cur["src"] = dest
+                    cur["info"] = probe(dest)
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": True, "name": dest.name,
+                         "dur": cur["info"]["duration"] or 10.0}).encode())
+                except Exception as exc:  # noqa: BLE001
+                    self._send(200, "application/json", _json.dumps(
+                        {"ok": False, "error": str(exc)}).encode())
+                return
             n = int(self.headers.get("Content-Length", 0))
             q = _json.loads(self.rfile.read(n) or b"{}")
             q = {k: ("" if v is None else v) for k, v in q.items()}
@@ -3112,11 +3369,12 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true",
                     help="print the ffmpeg command without running it")
     ap.add_argument("--pipeline", choices=("legacy", "photochemical"),
-                    default="legacy",
-                    help="processing pipeline. 'legacy' is the current filter "
-                         "chain. 'photochemical' renders through a simulated "
-                         "film process: virtual negative -> printer lights -> "
-                         "virtual print stock -> scan")
+                    default=None,
+                    help="processing engine. Default: photochemical — a "
+                         "simulated film process (virtual negative -> printer "
+                         "lights -> print stock -> scan). The classic filter "
+                         "chain is auto-selected when classic-only options "
+                         "are used, or force it with --pipeline legacy")
     ap.add_argument("--negative-stock", default="modern_500t",
                     metavar="PROFILE",
                     help="photochemical only: the virtual camera negative "
@@ -3150,13 +3408,14 @@ def main() -> None:
         except (AttributeError, ValueError):
             pass
 
-    # Flag validation runs before any filesystem or ffmpeg checks: a typo'd
-    # stock name must say so, not hide behind "file not found".
-    if args.pipeline == "photochemical":
-        args._pc_flags = _validate_photochemical_flags(args, ap)
-    elif args.print_stock and args.print_stock not in PRINT_STOCKS:
+    # Which engine runs (photochemical is the default; classic recipes
+    # auto-route with a note). Validation of photochemical flags happens
+    # AFTER style/look-file application below, since those can shape it.
+    _resolve_pipeline(args, ap)
+    if (args.pipeline == "legacy" and args.print_stock
+            and args.print_stock not in PRINT_STOCKS):
         sys.exit(f"error: {args.print_stock!r} is a photochemical print "
-                 f"profile — add --pipeline photochemical, or pick a legacy "
+                 f"profile — drop the classic-only options, or pick a legacy "
                  f"stock: {', '.join(sorted(PRINT_STOCKS))}")
 
     global FFMPEG, FFPROBE
@@ -3187,6 +3446,7 @@ def main() -> None:
         save_look_file(args)
 
     if args.pipeline == "photochemical":
+        args._pc_flags = _validate_photochemical_flags(args, ap)
         _setup_photochemical(args, ap)
 
     if args.ui:
