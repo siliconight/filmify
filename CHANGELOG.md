@@ -3,6 +3,22 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.44.2] — 2026-07-12
+
+### Fixed
+- **Dropped-in clips now save where you'd expect, not a hidden temp folder.**
+  When a file is dropped onto the panel, its working copy lives in a temp
+  import directory (the browser sandbox forces the copy). Exports defaulted
+  to "next to the source," which meant that temp directory — so renders and
+  saved looks landed in AppData\...\filmify-imports where no one would look.
+  A dropped/uploaded clip now anchors output to your Downloads folder (home
+  directory as a fallback), the panel's "saves to:" line shows it right
+  after the drop, and you can still pick any destination with Save to.
+  (Clips opened by browsing still save next to the original, unchanged.)
+- **Temp import copies are pruned.** Working copies older than a day are
+  cleared when the panel starts, so dropping files doesn't slowly fill
+  AppData.
+
 ## [0.44.1] — 2026-07-12
 
 ### Fixed

@@ -55,10 +55,11 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.44.1"
+__version__ = "0.44.2"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -2593,7 +2594,7 @@ dz.addEventListener("drop", e => {
   xhr.onload = () => {
     try {
       const r = JSON.parse(xhr.responseText);
-      if (r.ok) { $("importmsg").textContent = ""; showEditor(r.name); }
+      if (r.ok) { $("importmsg").textContent = ""; showEditor(r.name); refreshDest(); }
       else $("importmsg").textContent = r.error || "couldn't load that file";
     } catch(err) { $("importmsg").textContent = "load failed"; }
   };
@@ -2729,6 +2730,20 @@ def _ui_loglut(a):
     return None
 
 
+def _default_output_dir() -> Path:
+    """A visible, expected place to save exports — the user's Downloads
+    folder, falling back to the home directory, then the cwd. Used when the
+    source is a dropped/uploaded file whose real location (a temp copy) is
+    not somewhere anyone would look for their render."""
+    for cand in (Path.home() / "Downloads", Path.home()):
+        try:
+            if cand.is_dir():
+                return cand
+        except OSError:
+            continue
+    return Path.cwd()
+
+
 def run_ui(args) -> None:
     """Serve the control panel on localhost and open it in the browser."""
     import http.server
@@ -2738,6 +2753,22 @@ def run_ui(args) -> None:
 
     src = args.input   # may be None: panel opens in import state
     cur = {"src": src, "info": probe(src) if src else None, "outdir": None}
+    # Housekeeping: dropped-file working copies accumulate in the temp import
+    # dir. Prune ones older than a day at startup so AppData doesn't grow
+    # without bound (today's copies stay; they may still be in use).
+    try:
+        import tempfile as _tf
+        _imp = Path(_tf.gettempdir()) / "filmify-imports"
+        if _imp.is_dir():
+            _cut = time.time() - 86400
+            for _f in _imp.iterdir():
+                try:
+                    if _f.is_file() and _f.stat().st_mtime < _cut:
+                        _f.unlink()
+                except OSError:
+                    pass
+    except Exception:  # noqa: BLE001
+        pass
     state = {"rendering": False, "done": None, "error": None, "pct": 0,
              "batch": False, "b_total": 0, "b_done": 0, "b_name": "",
              "b_outdir": None}
@@ -3105,6 +3136,12 @@ def run_ui(args) -> None:
                         raise RuntimeError("upload interrupted")
                     cur["src"] = dest
                     cur["info"] = probe(dest)
+                    # A dropped file's working copy lives in a temp dir, which
+                    # must NOT become the export destination — the user never
+                    # navigates there. Anchor output to a sensible visible
+                    # place (Downloads), unless they've already picked one.
+                    if not cur["outdir"]:
+                        cur["outdir"] = _default_output_dir()
                     self._send(200, "application/json", _json.dumps(
                         {"ok": True, "name": dest.name,
                          "dur": cur["info"]["duration"] or 10.0}).encode())
