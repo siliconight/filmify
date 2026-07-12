@@ -3,6 +3,26 @@
 All notable changes to filmify are documented here.
 Versioning follows [SemVer](https://semver.org).
 
+## [0.44.1] — 2026-07-12
+
+### Fixed
+- **"The export won't play."** Three causes closed at once:
+  - **10-bit H.264 is now honest.** Requesting 10-bit with the default
+    H.264 codec produces High 10 profile — a grading/mezzanine format that
+    most consumer players (Windows Movies & TV, TVs, phones) simply cannot
+    decode, though VLC and every NLE can. filmify now says so plainly at
+    render time and in the panel's 10-bit help. It also stops the quiet
+    opposite lie: hardware H.264 encoders are 8-bit only, so a 10-bit
+    request routed to one silently threw the 10 bits away — 10-bit H.264
+    now always uses the software encoder so the bits are real. For a
+    watch-anywhere file use 8-bit; for real 10-bit delivery pair it with
+    ProRes/DNxHR.
+  - **`+faststart` on every H.264 MP4** — the index now leads the file, so
+    exports scrub instantly and stream/preview correctly everywhere.
+  - **A panel status race** could briefly report the *previous* render's
+    finished file when a new render was just starting; render/batch state
+    is now set before the worker thread launches.
+
 ## [0.44.0] — 2026-07-11
 
 ### Changed

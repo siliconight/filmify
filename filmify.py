@@ -58,7 +58,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-__version__ = "0.44.0"
+__version__ = "0.44.1"
 
 # The photochemical pipeline lives in sibling modules so the launchers and
 # packaging stay single-entry-point simple. Guarded import: legacy filmify
@@ -1906,7 +1906,17 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
         # h264 — delivery codec; fine for a finish pass, poor for editing.
         # Use a hardware encoder when one is actually available (much faster
         # on long clips); otherwise libx264 tuned for grain retention.
-        if not args.no_hwaccel and not args.preview:
+        if args.depth == 10:
+            # Hardware H.264 encoders are 8-bit only — using one would
+            # silently throw the 10 bits away. libx264 encodes real 10-bit
+            # H.264 (High 10), which is a GRADING format: most consumer
+            # players (Windows Movies & TV, TVs, phones) cannot decode it.
+            hw = None
+            print("note  : 10-bit H.264 (High 10) is for grading/mezzanine — "
+                  "most players can't decode it (VLC and NLEs can). For a "
+                  "watch-anywhere file use 8-bit, or pair 10-bit with "
+                  "--codec prores")
+        elif not args.no_hwaccel and not args.preview:
             hw = detect_hw_encoder()
         else:
             hw = None
@@ -1924,6 +1934,8 @@ def render(src: Path, out: Path, args, progress_cb=None) -> dict:
                     "-preset", "fast" if args.preview else "slow",
                     "-crf", str(args.crf), "-tune", "grain",
                     "-threads", "0", "-c:a", "copy"]
+        if args.codec == "h264":
+            cmd += ["-movflags", "+faststart"]
         if hw:
             print(f"encode: hardware ({hw})")
     # Tag the output as Rec.709 limited-range SDR — which is exactly what the
@@ -2267,8 +2279,8 @@ const HELP = {
   conform: "Cadence \u2014 conform to 24 fps with a 180\u00b0 shutter motion blur, the standard 'film motion' feel, instead of smooth 30/60 fps 'video motion'.",
   vignette: "Gentle darkening toward the edges of the frame, like a real lens. Draws the eye inward.",
   curve: "The filmic tone curve \u2014 how shadows and highlights roll off. Film compresses highlights gracefully (no harsh clipping) and has a characteristic contrast shape.",
-  depth: "10-bit processing keeps smoother gradients (skies, soft light) and survives further color grading better. Pair with ProRes/DNxHR. 8-bit is fine for quick delivery.",
-  depth10: "10-bit processing keeps smoother gradients (skies, soft light) and survives further color grading better. Pair with ProRes/DNxHR. 8-bit is fine for quick delivery.",
+  depth: "10-bit keeps smoother gradients and survives grading better — but as H.264 it makes a GRADING file (High 10) that most players can’t decode (VLC and editing apps can). Pair 10-bit with ProRes/DNxHR, or use 8-bit for a watch-anywhere file.",
+  depth10: "10-bit keeps smoother gradients and survives grading better — but as H.264 it makes a GRADING file (High 10) that most players can’t decode (VLC and editing apps can). Pair 10-bit with ProRes/DNxHR, or use 8-bit for a watch-anywhere file.",
   compare: "A/B split preview \u2014 shows the original on one side and the filmified result on the other, so you can judge the look against your source as you dial it in.",
   input_log: "If your camera shot in a flat 'Log' profile (S-Log3, V-Log, etc.), develop it to normal color first. Pick your camera's profile, or leave as Rec.709 for normal footage.",
   print_stock: "The color character of a film print stock, like choosing Kodak vs a warm or cool emulsion. A built-in 'graded through film' color engine. Your own .cube LUT overrides it.",
@@ -3141,6 +3153,8 @@ def run_ui(args) -> None:
                         {"ok": False, "error": str(exc)}).encode())
             elif self.path == "/render":
                 if not state["rendering"]:
+                    state.update(rendering=True, done=None, error=None,
+                                 pct=0)
                     threading.Thread(target=do_render, args=(q,),
                                      daemon=True).start()
                 self._send(200, "application/json", b'{"ok": true}')
@@ -3153,6 +3167,8 @@ def run_ui(args) -> None:
                     self._send(200, "application/json",
                                b'{"ok": false, "cancel": true}')
                     return
+                state.update(rendering=True, done=None, error=None,
+                             pct=0)
                 threading.Thread(target=do_batch, args=(q, folder),
                                  daemon=True).start()
                 self._send(200, "application/json", _json.dumps(
